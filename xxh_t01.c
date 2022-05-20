@@ -25,7 +25,7 @@ void run_xxhsum(char *file, int type)
 	if (!file)
 		return;
 	/* test whether the file could be open */
-	fp = fopen(file, "w+");
+	fp = fopen(file, "r");
 	if (!fp)
 		return;
 	fclose(fp);

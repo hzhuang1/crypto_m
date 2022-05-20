@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS="-Wall"
+CFLAGS=-Wall
 INCLUDE=-I/usr/local/include
 LDFLAGS=-lxxhash
 

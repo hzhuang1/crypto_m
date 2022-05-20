@@ -13,6 +13,7 @@
 #include <xxhash.h>
 
 #define CMD_LENGTH      256
+#define SRC_FILE	"/tmp/x"
 
 /* The algorithm sequence is same as defined in xxhsum */
 enum {
@@ -26,6 +27,7 @@ enum {
 struct buffer {
 	void *addr;
 	size_t len;
+	FILE *fp;
 };
 
 static int check_file(char *file)
@@ -85,6 +87,56 @@ out:
 	return ret;
 }
 
+static int load_partial_file(char *file, struct buffer *buf, int split)
+{
+	FILE *fp;
+	struct stat stat_buf;
+	int ret;
+	size_t sz, buf_sz;
+
+	if (!file || !buf || (split <= 0))
+		return -EINVAL;
+	/* get file length */
+	ret = stat(file, &stat_buf);
+	if (ret < 0) {
+		fprintf(stderr, "Fail to get file stat (%d)!\n", ret);
+		return ret;
+	}
+	if (stat_buf.st_size < split) {
+		fprintf(stderr, "File length (%ld) is less than split (%d)\n",
+			stat_buf.st_size, split);
+		return ret;
+	}
+	buf_sz = (stat_buf.st_size + split - 1) / split;
+	fp = fopen(file, "r");
+	if (!fp) {
+		fprintf(stderr, "Fail to open file!\n");
+		return -ENFILE;
+	}
+	buf->addr = malloc(buf_sz);
+	if (!buf->addr) {
+		fprintf(stderr, "Fail to allocate memory!\n");
+		ret = -ENOMEM;
+		goto out;
+	}
+	buf->len = buf_sz;
+	sz = fread(buf->addr, sizeof(char), buf_sz, fp);
+	if (!sz) {
+		fprintf(stderr, "Fail to read file!\n");
+		ret = -EFAULT;
+		goto out_rd;
+	}
+	buf->fp = fp;
+	return 0;
+out_rd:
+	free(buf->addr);
+	buf->addr = NULL;
+	buf->len = 0;
+out:
+	fclose(fp);
+	return ret;
+}
+
 void run_xxh64_01(char *file)
 {
 	struct buffer buf;
@@ -122,6 +174,39 @@ void run_xxh64_02(char *file)
 	free(buf.addr);
 }
 
+void run_xxh64_03(char *file)
+{
+	struct buffer buf;
+	XXH64_hash_t h64;
+	XXH64_state_t state;
+	int ret, split = 4;
+	size_t sz;
+
+	ret = check_file(file);
+	if (ret < 0)
+		return;
+	ret = load_partial_file(file, &buf, split);
+	if (ret < 0)
+		return;
+	XXH64_reset(&state, 0);
+	XXH64_update(&state, buf.addr, buf.len);
+	while (--split > 0) {
+		sz = fread(buf.addr, sizeof(char), buf.len, buf.fp);
+		if (!sz) {
+			fprintf(stderr, "Fail to read file!\n");
+			ret = -EFAULT;
+			goto out;
+		}
+		XXH64_update(&state, buf.addr, sz);
+	}
+	h64 = XXH64_digest(&state);
+	printf("%s Hash64:%lx\n", __func__, h64);
+	free(buf.addr);
+	return;
+out:
+	free(buf.addr);
+}
+
 void run_xxhsum(char *file, int type)
 {
 	char *cmd_buf;
@@ -147,9 +232,10 @@ void run_xxhsum(char *file, int type)
 
 int main(int argc, char **argv)
 {
-	run_xxhsum("/tmp/x", TYPE_XXH64);
-	run_xxh64_01("/tmp/x");
-	run_xxh64_02("/tmp/x");
+	run_xxhsum(SRC_FILE, TYPE_XXH64);
+	run_xxh64_01(SRC_FILE);
+	run_xxh64_02(SRC_FILE);
+	run_xxh64_03(SRC_FILE);
 	return 0;
 }
 

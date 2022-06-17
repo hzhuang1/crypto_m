@@ -61,3 +61,16 @@ load_02:
 	st1b	z1.b, p0, [x1]
 	ret
 	.size load_02, .-load_02
+
+/*
+ * void rev_01(unsigned char *in, unsigned char *out);
+ */
+	.global rev_01
+	.type rev_01, %function
+rev_01:
+	ptrue	p0.b
+	ld1b	z0.b, p0/z, [x0]
+	revh	z1.s, p0/m, z0.s
+	st1b	z1.b, p0, [x1]
+	ret
+	.size rev_01, .-rev_01

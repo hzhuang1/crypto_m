@@ -3,6 +3,7 @@
 extern int dump_cntw(void);
 extern void load_01(unsigned char *buf);
 extern void load_02(unsigned char *in, unsigned char *out);
+extern void rev_01(unsigned char *in, unsigned char *out);
 
 unsigned char in[256], out[256];
 
@@ -39,6 +40,7 @@ void dump_buf(unsigned char *buf, size_t len)
 	}
 }
 
+/* Call LD1W instruction (vector index) to gather load data. */
 void t_load_01(void)
 {
 	int cntw;
@@ -54,8 +56,17 @@ void t_load_01(void)
 	dump_buf(out, 256);
 }
 
+/* Call REVH instruction to reverse two 32-bit fields in each 64-bit field. */
+void t_rev_01(void)
+{
+	init_buf(in, 0x37, 256);
+	init_buf(out, 0x55, 256);
+	rev_01(in, out);
+	dump_buf(out, 256);
+}
+
 int main(void)
 {
-	t_load_01();
+	t_rev_01();
 	return 0;
 }

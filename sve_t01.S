@@ -74,3 +74,63 @@ rev_01:
 	st1b	z1.b, p0, [x1]
 	ret
 	.size rev_01, .-rev_01
+
+/*
+ * void rtl32_01(unsigned char *in, int bits);
+ * Load data from param INOUT into Z0 register.
+ * Output data from Z1 register into param INOUT.
+ * Access: Z0, Z1, Z2
+ */
+.macro rotate_left_01	seed:req, tmp:req, bits
+	lsl	\tmp\().s, \seed\().s, \bits
+	lsr	\seed\().s, p0/m, \seed\().s, 32 - \bits
+	orr	\seed\().s, p0/m, \seed\().s, \tmp\().s
+.endm
+
+	.global rtl32_01
+	.type rtl32_01, %function
+rtl32_01:
+	ptrue	p0.b
+	ld1b	z0.b, p0/z, [x0]
+	rotate_left_01	z0, z1, 13
+	st1b	z0.b, p0, [x1]
+	ret
+	.size rtl2_01, .-rtl32_01
+
+/*
+ * void round32_01(unsigned char *seed, unsigned char *in);
+ */
+.macro round_01		seed:req, in:req, tmp:req, prm1:req, prm2:req
+	// seed += in * PRIM32_2;
+	mla	\seed\().s, p0/m, \in\().s, \prm2\().s
+	rotate_left_01	\seed, \tmp, 13
+	mul	\seed\().s, p0/m, \seed\().s, \prm1\().s
+.endm
+	.global	round32_01
+	.type round32_01, %function
+round32_01:
+	ptrue	p0.b
+	// x0: for seed
+	// x1: for IN
+	ld1b	z0.b, p0/z, [x0]
+	ld1b	z1.b, p0/z, [x1]
+	adr	x3, XXH32_PRIME
+	// x2: PRIME32_01
+	ldr	x2, [x3], 4
+	mov	z3.s, p0/m, w2
+	// x2: PRIME32_02
+	ldr	x2, [x3]
+	mov	z4.s, p0/m, w2
+	round_01	z0, z1, z2, z3, z4
+	st1b	z0.b, p0, [x0]
+	ret
+	.size round32_01, .-round32_01
+
+	.section .rodata.cts16,"aM",@progbits,16
+	.align 16
+XXH32_PRIME:
+	.word	0x9E3779B1
+	.word	0x85EBCA77
+	.word	0xC2B2AE3D
+	.word	0x27D4EB2F
+	.word	0x165667B1

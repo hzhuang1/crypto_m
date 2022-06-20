@@ -1,9 +1,12 @@
+#include <stdint.h>
 #include <stdio.h>
 
 extern int dump_cntw(void);
 extern void load_01(unsigned char *buf);
 extern void load_02(unsigned char *in, unsigned char *out);
 extern void rev_01(unsigned char *in, unsigned char *out);
+extern void rtl32_01(unsigned char *in, unsigned char *out);
+extern void round32_01(unsigned char *in, unsigned char *out);
 
 unsigned char in[256], out[256];
 
@@ -65,8 +68,66 @@ void t_rev_01(void)
 	dump_buf(out, 256);
 }
 
+void t_rtl_01(void)
+{
+	init_buf(in, 0x37, 256);
+	init_buf(out, 0x55, 256);
+	dump_buf(in, 64);
+	rtl32_01(in, out);
+	dump_buf(out, 64);
+}
+
+void t_round_01(void)
+{
+	init_buf(in, 0x37, 256);
+	init_buf(out, 0x55, 256);
+	dump_buf(in, 64);
+	// out works as seed
+	round32_01(out, in);
+	dump_buf(out, 64);
+}
+
+#define xxh_rotl32(x, r) ((x << r) | (x >> (32 - r)))
+
+static const uint32_t PRIME32_1 = 2654435761U;
+static const uint32_t PRIME32_2 = 2246822519U;
+static const uint32_t PRIME32_3 = 3266489917U;
+static const uint32_t PRIME32_4 =  668265263U;
+static const uint32_t PRIME32_5 =  374761393U;
+
+uint32_t xxh32_round(uint32_t seed, const uint32_t input)
+{
+	seed += input * PRIME32_2;
+	seed = xxh_rotl32(seed, 13);
+	seed *= PRIME32_1;
+	return seed;
+}
+
+void sample_round_01(void)
+{
+	uint32_t seed, cntw;
+	uint32_t *pseed, *pin;
+
+	init_buf(in, 0x37, 256);
+	init_buf(out, 0x55, 256);
+	dump_buf(in, 64);
+	pseed = (uint32_t *)out;
+	pin = (uint32_t *)in;
+	// 512 / 32 = 16
+	cntw = dump_cntw();
+	for (int i = 0; i < cntw; i++) {
+		seed = xxh32_round(*pseed, *(const uint32_t *)pin);
+		*pseed = seed;
+		pseed++;
+		pin++;
+	}
+	printf("seed=0x%x\n", seed);
+	dump_buf(out, 64);
+}
+
 int main(void)
 {
-	t_rev_01();
+	t_round_01();
+	sample_round_01();
 	return 0;
 }

@@ -168,6 +168,105 @@ round32_02:
 	ret
 	.size round32_02, .-round32_02
 
+/*
+ * void round32_03(unsigned char *seed, unsigned char *in)
+ */
+// round32_01: only one seed
+// round32_02: there're 16 seeds. One seed for 512-bit.
+// round32_03: there're 4 seeds for one job. Each seed is 32-bit. And there're 4 jobs.
+.macro rotate_left_x4_01  v1:req, v2:req, v3:req, v4:req, t1:req, t2:req, t3:req, t4:req, bits:req
+	lsl	\t1\().s, \v1\().s, \bits
+	lsl	\t2\().s, \v2\().s, \bits
+	lsl	\t3\().s, \v3\().s, \bits
+	lsl	\t4\().s, \v4\().s, \bits
+	lsr	\v1\().s, p0/m, \v1\().s, 32 - \bits
+	lsr	\v2\().s, p0/m, \v2\().s, 32 - \bits
+	lsr	\v3\().s, p0/m, \v3\().s, 32 - \bits
+	lsr	\v4\().s, p0/m, \v4\().s, 32 - \bits
+	orr	\v1\().s, p0/m, \v1\().s, \t1\().s
+	orr	\v2\().s, p0/m, \v2\().s, \t2\().s
+	orr	\v3\().s, p0/m, \v3\().s, \t3\().s
+	orr	\v4\().s, p0/m, \v4\().s, \t4\().s
+.endm
+
+.macro round_x4_01  v1:req, v2:req, v3:req, v4:req, in1:req, in2:req, in3:req, in4:req, prm1:req, prm2:req
+	// seed += in * PRIME32_2
+	mla	\v1\().s, p0/m, \in1\().s, \prm2\().s
+	mla	\v2\().s, p0/m, \in2\().s, \prm2\().s
+	mla	\v3\().s, p0/m, \in3\().s, \prm2\().s
+	mla	\v4\().s, p0/m, \in4\().s, \prm2\().s
+	// IN registers are useless, use them as tmp registers now.
+	rotate_left_x4_01  \v1, \v2, \v3, \v4, \in1, \in2, \in3, \in4, 13
+	mul	\v1\().s, p0/m, \v1\().s, \prm1\().s
+	mul	\v2\().s, p0/m, \v2\().s, \prm1\().s
+	mul	\v3\().s, p0/m, \v3\().s, \prm1\().s
+	mul	\v4\().s, p0/m, \v4\().s, \prm1\().s
+.endm
+	.global  round32_03
+	.type round32_03, %function
+round32_03:
+	ptrue	p0.b
+	// x0: seed buffer (all seeds in one buffer)
+	// x1: IN buffer
+	// z2: index for seed
+	init_index  z2
+	// x5: cntw
+	cntw	x5
+	//mov	x5, #8
+	// x4: temporary pointer of seed buffer
+	mov	x4, x0
+	// There could be 16 jobs one Z register
+	// load seed v1
+	ld1w	z3.s, p0/z, [x4, z2.s, UXTW 0]
+	add	x4, x4, #4
+	// load seed v2
+	ld1w	z4.s, p0/z, [x4, z2.s, UXTW 0]
+	add	x4, x4, #4
+	// load seed v3
+	ld1w	z5.s, p0/z, [x4, z2.s, UXTW 0]
+	add	x4, x4, #4
+	// load seed v4
+	ld1w	z6.s, p0/z, [x4, z2.s, UXTW 0]
+	add	x4, x4, #4
+.loop03:
+	cbz	x5, .return03
+	// load IN for v1
+	ld1w	z7.s, p0/z, [x1, z2.s, UXTW 2]
+	add	x1, x1, #4
+	// load IN for v2
+	ld1w	z8.s, p0/z, [x1, z2.s, UXTW 2]
+	add	x1, x1, #4
+	// load IN for v3
+	ld1w	z9.s, p0/z, [x1, z2.s, UXTW 2]
+	add	x1, x1, #4
+	// load IN
+	ld1w	z10.s, p0/z, [x1, z2.s, UXTW 2]
+	add	x1, x1, #4
+	// x3: PRIME address
+	adr	x3, XXH32_PRIME
+	// x2: temporary register for PRIME32_01
+	ldr	x2, [x3], 4
+	// Z0: PRIME32_01
+	mov	z0.s, p0/m, w2
+	// x2: temporary register for PRIME32_02
+	ldr	x2, [x3]
+	// Z1: PRIME32_02
+	mov	z1.s, p0/m, w2
+	round_x4_01  z3, z4, z5, z6, z7, z8, z9, z10, z0, z1
+	st1w	z3.s, p0, [x0, z2.s, UXTW 0]
+	add	x0, x0, #4
+	st1w	z4.s, p0, [x0, z2.s, UXTW 0]
+	add	x0, x0, #4
+	st1w	z5.s, p0, [x0, z2.s, UXTW 0]
+	add	x0, x0, #4
+	st1w	z6.s, p0, [x0, z2.s, UXTW 0]
+	add	x0, x0, #4
+	sub	x5, x5, #4
+	b	.loop03
+.return03:
+	ret
+	.size round32_03, .-round32_03
+
 	.section .rodata.cts16,"aM",@progbits,16
 	.align 16
 XXH32_PRIME:

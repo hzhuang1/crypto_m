@@ -7,8 +7,9 @@ extern void load_02(unsigned char *in, unsigned char *out);
 extern void rev_01(unsigned char *in, unsigned char *out);
 extern void rtl32_01(unsigned char *in, unsigned char *out);
 extern void round32_01(unsigned char *in, unsigned char *out);
+extern void round32_02(unsigned char *seed, unsigned char *in);
 
-unsigned char in[256], out[256];
+unsigned char in[1024], out[1024];
 
 void set_buf(unsigned char *buf, unsigned char val, size_t len)
 {
@@ -87,6 +88,18 @@ void t_round_01(void)
 	dump_buf(out, 64);
 }
 
+void t_round_02(void)
+{
+	uint32_t seed, cntw;
+	uint32_t *pseed, *pin;
+
+	init_buf(in, 0x37, 1024);
+	init_buf(out, 0x55, 1024);
+	dump_buf(in, 64);
+	round32_02(out, in);
+	dump_buf(out, 1024);
+}
+
 #define xxh_rotl32(x, r) ((x << r) | (x >> (32 - r)))
 
 static const uint32_t PRIME32_1 = 2654435761U;
@@ -103,13 +116,14 @@ uint32_t xxh32_round(uint32_t seed, const uint32_t input)
 	return seed;
 }
 
+// only one seed
 void sample_round_01(void)
 {
 	uint32_t seed, cntw;
 	uint32_t *pseed, *pin;
 
-	init_buf(in, 0x37, 256);
-	init_buf(out, 0x55, 256);
+	init_buf(in, 0x37, 1024);
+	init_buf(out, 0x55, 1024);
 	dump_buf(in, 64);
 	pseed = (uint32_t *)out;
 	pin = (uint32_t *)in;
@@ -125,9 +139,32 @@ void sample_round_01(void)
 	dump_buf(out, 64);
 }
 
+// There're 16 seeds in the seed buffer.
+void sample_round_02(void)
+{
+	uint32_t seed, cntw;
+	uint32_t *pseed, *pin;
+
+	init_buf(in, 0x37, 1024);
+	init_buf(out, 0x55, 1024);
+	dump_buf(in, 64);
+	pseed = (uint32_t *)out;
+	pin = (uint32_t *)in;
+	// 512 / 32 = 16
+	cntw = dump_cntw();
+	for (int i = 0; i < cntw * 16; i++) {
+		seed = xxh32_round(*pseed, *(const uint32_t *)pin);
+		*pseed = seed;
+		pin++;
+		pseed++;
+	}
+	printf("seed=0x%x\n", seed);
+	dump_buf(out, 1024);
+}
+
 int main(void)
 {
-	t_round_01();
-	sample_round_01();
+	t_round_02();
+	sample_round_02();
 	return 0;
 }

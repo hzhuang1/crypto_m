@@ -1,9 +1,9 @@
 
 	.arch armv8.2-a+sve
 
-.macro init_index
-	mov	x4, 4
-	index	z0.s, #0, w4
+.macro init_index  idx:req
+	mov	x4, 16
+	index	\idx\().s, #0, w4
 .endm
 
 /*
@@ -25,7 +25,7 @@ dump_cntw:
 	.type load_01, %function
 load_01:
 	ptrue	p0.b, VL64
-	init_index
+	init_index z0
 	st1b	z0.b, p0, [x0]
 	ret
 	.size load_01, .-load_01
@@ -38,7 +38,7 @@ load_01:
 load_02:
 	ptrue	p0.b
 	ptrue	p1.s
-	init_index
+	init_index z0
 	ld1w	z1.s, p0/z, [x0]
 	// Index is stored in Z0 by macro init_index(). Step is 4.
 	// Z0.s:
@@ -125,6 +125,48 @@ round32_01:
 	st1b	z0.b, p0, [x0]
 	ret
 	.size round32_01, .-round32_01
+
+/*
+ * void round32_02(unsigned char *seed, unsigned char *in);
+ */
+// round32_01: only one seed
+// round32_02: there're 16 seeds
+	.global round32_02
+	.type round32_02, %function
+round32_02:
+	ptrue	p0.b
+	// x0: for seed
+	// x1: for IN
+	// z2: index
+	init_index  z2
+	// x5: cntw
+	cntw	x5
+.loop:
+	cbz	x5, .return
+	// load seed
+	ld1w	z0.s, p0/z, [x0, z2.s, UXTW 2]
+	// load IN
+	ld1w	z1.s, p0/z, [x1, z2.s, UXTW 2]
+	adr	x3, XXH32_PRIME
+	// x2: PRIME32_01
+	ldr	x2, [x3], 4
+	// load PRIME32_01
+	mov	z3.s, p0/m, w2
+	// x2: PRIME32_02
+	ldr	x2, [x3]
+	// load PRIME32_02
+	mov	z4.s, p0/m, w2
+	// test
+	round_01	z0, z1, z5, z3, z4
+	st1w	z0.s, p0, [x0, z2.s, UXTW 2]
+	add	x0, x0, #4
+	add	x1, x1, #4
+	//st1w	z2.s, p0, [x0]	// test dump z2
+	sub	x5, x5, #1
+	b	.loop
+.return:
+	ret
+	.size round32_02, .-round32_02
 
 	.section .rodata.cts16,"aM",@progbits,16
 	.align 16

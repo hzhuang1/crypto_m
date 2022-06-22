@@ -267,6 +267,75 @@ round32_03:
 	ret
 	.size round32_03, .-round32_03
 
+// src, dst, tmp: all temporary registers
+// Load seeds from different jobs, and save them in one continuous buffer.
+.macro load_seed_from_jobs_01  jobs:req, job_cnt:req, buffer:req, src:req, dst:req, tmp:req, cnt:req
+	// Avoid to use jobs and buffer directly. Since it may be used
+	// in multiple times.
+	mov	\src, \jobs
+	mov	\dst, \buffer
+	mov	\cnt, \job_cnt
+.ldr_seed_01:
+	// tmp: ranges from jobs[0], jobs[1], ...
+	ldr	\tmp, [\src], #8
+	// tmp: jobs[1].result_digest, ranges from 0, ...
+	add	\tmp, \tmp, #16
+	// Read 128-bit seed value
+	ld1	{v0.16b}, [\tmp]
+	// Save 128-bit seed value in the continous buffer
+	st1	{v0.16b}, [\dst], #16
+	subs	\cnt, \cnt, #1
+	bne	.ldr_seed_01
+.endm
+
+.macro load_block_from_jobs_01  jobs:req, job_cnt:req, buffer:req, block_idx:req, src:req, dst:req, tmp:req, cnt:req, t1:req, t2:req, t3:req, t4:req
+	// Avoid to use jobs and buffer directly. Since it may be used
+	// in multiple times.
+	mov	\src, \jobs
+	mov	\dst, \buffer
+	mov	\cnt, \job_cnt
+.ldr_block_01:
+	// tmp: ranges from jobs[0], jobs[1], ...
+	ldr	\tmp, [\src], #8
+	// tmp: jobs[i].buffer, ranges from 0, ...
+	ldr	\tmp, [\tmp]
+	// tmp: block address in job[i].buffer
+	add	\tmp, \tmp, \block_idx, lsl #6
+	ld1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\tmp]
+	st1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\dst], 64
+	subs	\cnt, \cnt, #1
+	bne	.ldr_block_01
+.endm
+
+/*
+ * void load_seed_01(void **jobs, int job_cnt, void *buffer);
+ */
+	.global load_seed_01
+	.type load_seed_01, %function
+load_seed_01:
+	load_seed_from_jobs_01  x0, x1, x2, x4, x5, x6, x7
+	ret
+	.size load_seed_01, .-load_seed_01
+
+/*
+ * void load_block_01(void *jobs, int job_cnt, void *buffer, int block_idx);
+ */
+/*
+	jobs		.equ	x0
+	job_cnt		.equ	w1
+	buffer		.equ	x2
+	src		.equ	x5
+	dst		.equ	x6
+	tmp		.equ	x8
+	tmpw		.equ	w8
+*/
+	.global load_block_01
+	.type load_block_01, %function
+load_block_01:
+	load_block_from_jobs_01  x0, x1, x2, x3, x4, x5, x6, x7, v0, v1, v2, v3
+	ret
+	.size load_block_01, .-load_block_01
+
 	.section .rodata.cts16,"aM",@progbits,16
 	.align 16
 XXH32_PRIME:

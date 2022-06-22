@@ -267,6 +267,75 @@ round32_03:
 	ret
 	.size round32_03, .-round32_03
 
+/*
+ * void round32_04(void *seed_buf, void *data_buf, int block_sz, int job_cnt);
+ */
+	.global round32_04
+	.type round32_04, %function
+round32_04:
+	// x5: block_sz
+	mov	x5, x2
+	// w3: job_cnt
+	whilelo	p0.s, wzr, w3
+	// x0: seed buffer (all seeds in one buffer)
+	// x1: IN buffer
+	// z2: index for seed
+	init_index  z2
+	// x4: temporary pointer of seed buffer
+	mov	x4, x0
+	// There could be 16 jobs one Z register
+	// load seed v1
+	ld1w	z3.s, p0/z, [x4, z2.s, UXTW 0]
+	add	x4, x4, #4
+	// load seed v2
+	ld1w	z4.s, p0/z, [x4, z2.s, UXTW 0]
+	add	x4, x4, #4
+	// load seed v3
+	ld1w	z5.s, p0/z, [x4, z2.s, UXTW 0]
+	add	x4, x4, #4
+	// load seed v4
+	ld1w	z6.s, p0/z, [x4, z2.s, UXTW 0]
+	add	x4, x4, #4
+.loop04:
+	cbz	x5, .return04
+	// load IN for v1
+	ld1w	z7.s, p0/z, [x1, z2.s, UXTW 2]
+	add	x1, x1, #4
+	// load IN for v2
+	ld1w	z8.s, p0/z, [x1, z2.s, UXTW 2]
+	add	x1, x1, #4
+	// load IN for v3
+	ld1w	z9.s, p0/z, [x1, z2.s, UXTW 2]
+	add	x1, x1, #4
+	// load IN
+	ld1w	z10.s, p0/z, [x1, z2.s, UXTW 2]
+	add	x1, x1, #4
+	// x3: PRIME address
+	adr	x3, XXH32_PRIME
+	// x2: temporary register for PRIME32_01
+	ldr	x2, [x3], 4
+	// Z0: PRIME32_01
+	mov	z0.s, p0/m, w2
+	// x2: temporary register for PRIME32_02
+	ldr	x2, [x3]
+	// Z1: PRIME32_02
+	mov	z1.s, p0/m, w2
+	round_x4_01  z3, z4, z5, z6, z7, z8, z9, z10, z0, z1
+	sub	x5, x5, #4
+	b	.loop04
+.return04:
+	st1w	z3.s, p0, [x0, z2.s, UXTW 0]
+	add	x0, x0, #4
+	st1w	z4.s, p0, [x0, z2.s, UXTW 0]
+	add	x0, x0, #4
+	st1w	z5.s, p0, [x0, z2.s, UXTW 0]
+	add	x0, x0, #4
+	st1w	z6.s, p0, [x0, z2.s, UXTW 0]
+	add	x0, x0, #4
+	ret
+	.size round32_04, .-round32_04
+
+
 // src, dst, tmp: all temporary registers
 // Load seeds from different jobs, and save them in one continuous buffer.
 .macro load_seed_from_jobs_01  jobs:req, job_cnt:req, buffer:req, src:req, dst:req, tmp:req, cnt:req

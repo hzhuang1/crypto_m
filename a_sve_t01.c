@@ -19,6 +19,7 @@ extern int dump_cntw(void);
 extern void load_01(unsigned char *buf);
 extern void load_02(unsigned char *in, unsigned char *out);
 extern void load_stack_01(XXH32_JOB **jobs, int job_cnt, int block_cnt, void *buf);
+extern void load_stack_02(XXH32_JOB **jobs, int job_cnt, int block_cnt, void *buf);
 extern void rev_01(unsigned char *in, unsigned char *out);
 extern void rtl32_01(unsigned char *in, unsigned char *out);
 extern void round32_01(unsigned char *in, unsigned char *out);
@@ -155,6 +156,38 @@ out:
 	for (; i > 0; i--)
 		free_job(job_vec[i - 1]);
 }
+
+void t_load_stack_02(void)
+{
+	XXH32_JOB *job_vec[XXH32_MAX_JOBS];
+	void *buf;
+	int i, j, m, block_cnt = 2;
+	size_t seed_size;
+	uint32_t *pseed, *pin;
+	uint32_t v[4], cntw;
+
+	seed_size = XXH32_DIGEST_NWORDS * 4;
+	for (i = 0; i < XXH32_MAX_JOBS; i++) {
+		job_vec[i] = alloc_job(XXH32_BLOCK_SIZE * 2, i * 10000);
+		if (!job_vec[i])
+			goto out;
+	}
+	buf = calloc(1, XXH32_MAX_JOBS * (seed_size + XXH32_BLOCK_SIZE));
+	if (!buf)
+		goto out_seed;
+	load_stack_02(job_vec, XXH32_MAX_JOBS, 2, buf);
+	dump_buf(buf, XXH32_MAX_JOBS * (seed_size + XXH32_BLOCK_SIZE));
+	free(buf);
+	for (i = 0; i < XXH32_MAX_JOBS; i++)
+		free_job(job_vec[i]);
+	return;
+out_seed:
+	i = XXH32_MAX_JOBS;
+out:
+	for (; i > 0; i--)
+		free_job(job_vec[i - 1]);
+}
+
 
 /* Call REVH instruction to reverse two 32-bit fields in each 64-bit field. */
 void t_rev_01(void)
@@ -643,7 +676,7 @@ out:
 
 int main(void)
 {
-	t_load_stack_01();
+	t_load_stack_02();
 /*
 	t_round_05();
 	sample_round_05();

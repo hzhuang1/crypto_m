@@ -177,6 +177,51 @@ load_stack_01:
 	.size load_stack_01, .-load_stack_01
 
 /*
+ * void load_stack_02(void **jobs, int job_cnt, int block_cnt, void *buf);
+ */
+	.global load_stack_02
+	.type load_stack_02, %function
+load_stack_02:
+	stp	x29, x30, [sp, #-48]!
+	mov	x29, sp
+	// xxh32_create_stack_buf_01(job_cnt, seed_buf, data_buf, tmp);
+	xxh32_create_stack_buf_01  x1, x4, x5, x6
+	// load_seed_from_jobs_01(jobs, job_cnt, buffer, src, dst, tmp, cnt);
+	// src, dst, tmp, cnt are temporary registers
+	load_seed_from_jobs_01  x0, x1, x4, x7, x8, x6, x10
+	// load_block_from_jobs_01(jobs, job_cnt, buffer, block_idx, src, dst, tmp, cnt, t1, t2, t3, t4);
+	mov	x11, #0
+10:
+	load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v1, v2, v3, v4
+	// copy data from stack to external buffer to test
+	mov	x6, x1, lsl #6
+	// x5: data_buf
+	mov	x7, x5
+	mov	x8, x3
+20:
+	ldr	x9, [x7], #4
+	str	x9, [x8], #4
+	subs	x6, x6, #4
+	bne	20b
+	// copy seeds from stack to external buffer to test
+	mov	x6, x1, lsl #4
+30:
+	ldr	x9, [x7], #4
+	str	x9, [x8], #4
+	subs	x6, x6, #4
+	bne	30b
+	add	x11, x11, #1
+	cmp	x11, x2
+	bne	10b
+	//init_index_02  z2, w6
+	//xxh32_load_stack_seed_01  z3, z4, z5, z6, x4, z2
+
+	xxh32_free_stack_buf_01
+	ldp	x29, x30, [sp], #48
+	ret
+	.size load_stack_02, .-load_stack_02
+
+/*
  * void rev_01(unsigned char *in, unsigned char *out);
  */
 	.global rev_01

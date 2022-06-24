@@ -6,6 +6,51 @@
 	index	\idx\().s, #0, w4
 .endm
 
+.macro init_index_02 idx:req, tmp:req
+	mov	\tmp, 16
+	index	\idx\().s, #0, \tmp
+.endm
+
+// src, dst, tmp: all temporary registers
+// Load seeds from different jobs, and save them in one continuous buffer.
+.macro load_seed_from_jobs_01  jobs:req, job_cnt:req, buffer:req, src:req, dst:req, tmp:req, cnt:req
+	// Avoid to use jobs and buffer directly. Since it may be used
+	// in multiple times.
+	mov	\src, \jobs
+	mov	\dst, \buffer
+	mov	\cnt, \job_cnt
+101:
+	// tmp: ranges from jobs[0], jobs[1], ...
+	ldr	\tmp, [\src], #8
+	// tmp: jobs[1].result_digest, ranges from 0, ...
+	add	\tmp, \tmp, #16
+	// Read 128-bit seed value
+	ld1	{v0.16b}, [\tmp]
+	// Save 128-bit seed value in the continous buffer
+	st1	{v0.16b}, [\dst], #16
+	subs	\cnt, \cnt, #1
+	bne	101b
+.endm
+
+.macro load_block_from_jobs_01  jobs:req, job_cnt:req, buffer:req, block_idx:req, src:req, dst:req, tmp:req, cnt:req, t1:req, t2:req, t3:req, t4:req
+	// Avoid to use jobs and buffer directly. Since it may be used
+	// in multiple times.
+	mov	\src, \jobs
+	mov	\dst, \buffer
+	mov	\cnt, \job_cnt
+102:
+	// tmp: ranges from jobs[0], jobs[1], ...
+	ldr	\tmp, [\src], #8
+	// tmp: jobs[i].buffer, ranges from 0, ...
+	ldr	\tmp, [\tmp]
+	// tmp: block address in job[i].buffer
+	add	\tmp, \tmp, \block_idx, lsl #6
+	ld1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\tmp]
+	st1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\dst], 64
+	subs	\cnt, \cnt, #1
+	bne	102b
+.endm
+
 /*
  * int dump_cntw(void);
  */
@@ -61,6 +106,75 @@ load_02:
 	st1b	z1.b, p0, [x1]
 	ret
 	.size load_02, .-load_02
+
+// Create both seed and data buf on stack
+.macro xxh32_create_stack_buf_01  job_cnt:req, seed_buf:req, data_buf:req, tmp:req
+	// Reserve the unified seed buffer for all data lanes.
+	// Each lane costs 16-byte long.
+	mov	\tmp, \job_cnt, lsl #4
+	sub	\seed_buf, sp, \tmp
+	// Reserve the unified data buffer for all data lanes.
+	// Each lane costs 64-byte long.
+	mov	\tmp, \job_cnt, lsl #6
+	sub	\data_buf, \seed_buf, \tmp
+	mov	sp, \data_buf
+.endm
+
+.macro xxh32_free_stack_buf_01
+	mov	sp, x29
+.endm
+
+.macro xxh32_load_stack_seed_01 v1:req, v2:req, v3:req, v4:req, seed_buf:req, offs:req
+	ld1w	\v1\().s, p0/z, [\seed_buf, \offs\().s, UXTW 0]
+	add	\seed_buf, \seed_buf, #4
+	ld1w	\v2\().s, p0/z, [\seed_buf, \offs\().s, UXTW 0]
+	add	\seed_buf, \seed_buf, #4
+	ld1w	\v3\().s, p0/z, [\seed_buf, \offs\().s, UXTW 0]
+	add	\seed_buf, \seed_buf, #4
+	ld1w	\v4\().s, p0/z, [\seed_buf, \offs\().s, UXTW 0]
+	add	\seed_buf, \seed_buf, #4
+.endm
+
+/*
+ * void load_stack_01(void **jobs, int job_cnt, int block_cnt, void *buf);
+ */
+	.global load_stack_01
+	.type load_stack_01, %function
+load_stack_01:
+	stp	x29, x30, [sp, #-48]!
+	mov	x29, sp
+	// xxh32_create_stack_buf_01(job_cnt, seed_buf, data_buf, tmp);
+	xxh32_create_stack_buf_01  x1, x4, x5, x6
+	// load_seed_from_jobs_01(jobs, job_cnt, buffer, src, dst, tmp, cnt);
+	// src, dst, tmp, cnt are temporary registers
+	load_seed_from_jobs_01  x0, x1, x4, x7, x8, x6, x10
+	// load_block_from_jobs_01(jobs, job_cnt, buffer, block_idx, src, dst, tmp, cnt, t1, t2, t3, t4);
+	mov	x11, #0
+	load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v1, v2, v3, v4
+	// copy data from stack to external buffer to test
+	mov	x6, x1, lsl #6
+	// x5: data_buf
+	mov	x7, x5
+	mov	x8, x3
+10:
+	ldr	x9, [x7], #4
+	str	x9, [x8], #4
+	subs	x6, x6, #4
+	bne	10b
+	// copy seeds from stack to external buffer to test
+	mov	x6, x1, lsl #4
+20:
+	ldr	x9, [x7], #4
+	str	x9, [x8], #4
+	subs	x6, x6, #4
+	bne	20b
+	//init_index_02  z2, w6
+	//xxh32_load_stack_seed_01  z3, z4, z5, z6, x4, z2
+
+	xxh32_free_stack_buf_01
+	ldp	x29, x30, [sp], #48
+	ret
+	.size load_stack_01, .-load_stack_01
 
 /*
  * void rev_01(unsigned char *in, unsigned char *out);
@@ -335,46 +449,6 @@ round32_04:
 	ret
 	.size round32_04, .-round32_04
 
-
-// src, dst, tmp: all temporary registers
-// Load seeds from different jobs, and save them in one continuous buffer.
-.macro load_seed_from_jobs_01  jobs:req, job_cnt:req, buffer:req, src:req, dst:req, tmp:req, cnt:req
-	// Avoid to use jobs and buffer directly. Since it may be used
-	// in multiple times.
-	mov	\src, \jobs
-	mov	\dst, \buffer
-	mov	\cnt, \job_cnt
-.ldr_seed_01:
-	// tmp: ranges from jobs[0], jobs[1], ...
-	ldr	\tmp, [\src], #8
-	// tmp: jobs[1].result_digest, ranges from 0, ...
-	add	\tmp, \tmp, #16
-	// Read 128-bit seed value
-	ld1	{v0.16b}, [\tmp]
-	// Save 128-bit seed value in the continous buffer
-	st1	{v0.16b}, [\dst], #16
-	subs	\cnt, \cnt, #1
-	bne	.ldr_seed_01
-.endm
-
-.macro load_block_from_jobs_01  jobs:req, job_cnt:req, buffer:req, block_idx:req, src:req, dst:req, tmp:req, cnt:req, t1:req, t2:req, t3:req, t4:req
-	// Avoid to use jobs and buffer directly. Since it may be used
-	// in multiple times.
-	mov	\src, \jobs
-	mov	\dst, \buffer
-	mov	\cnt, \job_cnt
-.ldr_block_01:
-	// tmp: ranges from jobs[0], jobs[1], ...
-	ldr	\tmp, [\src], #8
-	// tmp: jobs[i].buffer, ranges from 0, ...
-	ldr	\tmp, [\tmp]
-	// tmp: block address in job[i].buffer
-	add	\tmp, \tmp, \block_idx, lsl #6
-	ld1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\tmp]
-	st1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\dst], 64
-	subs	\cnt, \cnt, #1
-	bne	.ldr_block_01
-.endm
 
 /*
  * void load_seed_01(void **jobs, int job_cnt, void *buffer);

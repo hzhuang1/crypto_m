@@ -6,8 +6,15 @@
 	index	\idx\().s, #0, w4
 .endm
 
+// for seeds
 .macro init_index_02 idx:req, tmp:req
 	mov	\tmp, 16
+	index	\idx\().s, #0, \tmp
+.endm
+
+// for IN data
+.macro init_index_03 idx:req, tmp:req
+	mov	\tmp, 64
 	index	\idx\().s, #0, \tmp
 .endm
 
@@ -585,6 +592,7 @@ round32_04:
 	// x1: IN buffer
 	// z2: index for seed
 	init_index  z2
+	init_index_03 z12, w6
 	// x4: temporary pointer of seed buffer
 	mov	x4, x0
 	// There could be 16 jobs one Z register
@@ -600,20 +608,20 @@ round32_04:
 	// load seed v4
 	ld1w	z6.s, p0/z, [x4, z2.s, UXTW 0]
 	add	x4, x4, #4
-	//mov	x5, #36
 .loop04:
 	cbz	x5, .return04
 	// load IN for v1
-	ld1w	z7.s, p0/z, [x1, z2.s, UXTW 2]
+	ld1w	z7.s, p0/z, [x1, z12.s, UXTW 2]
+	mov	z11.d, z7.d
 	add	x1, x1, #4
 	// load IN for v2
-	ld1w	z8.s, p0/z, [x1, z2.s, UXTW 2]
+	ld1w	z8.s, p0/z, [x1, z12.s, UXTW 2]
 	add	x1, x1, #4
 	// load IN for v3
-	ld1w	z9.s, p0/z, [x1, z2.s, UXTW 2]
+	ld1w	z9.s, p0/z, [x1, z12.s, UXTW 2]
 	add	x1, x1, #4
 	// load IN
-	ld1w	z10.s, p0/z, [x1, z2.s, UXTW 2]
+	ld1w	z10.s, p0/z, [x1, z12.s, UXTW 2]
 	add	x1, x1, #4
 	// x3: PRIME address
 	adr	x3, XXH32_PRIME
@@ -641,6 +649,7 @@ round32_04:
 	ptrue	p1.b
 	st1b	z3.b, p1, [x0]
 	add	x0, x0, #64
+	//st1b	z11.b, p1, [x0]
 	st1b	z4.b, p1, [x0]
 	add	x0, x0, #64
 	st1b	z5.b, p1, [x0]
@@ -670,6 +679,7 @@ stack_round_01:
 	whilelo	p0.s, wzr, w1
 	// init_index_02(idx, tmp);
 	init_index_02 z2, w6
+	init_index_03 z12, w6
 
 	// x8: PRIME address
 	adr	x8, XXH32_PRIME
@@ -702,20 +712,20 @@ stack_round_01:
 10:
 	// load_block_from_jobs_01(jobs, job_cnt, buffer, block_idx, src, dst, tmp, cnt, t1, t2, t3, t4);
 	//load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v1, v2, v3, v4
-	load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v11, v12, v13, v14
+	load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v7, v8, v9, v10
 
 	mov	x8, x5
 	// x10: block size
 	mov	x10, #16	// 2048 bit / 128 bit-per-row = 16 row
 20:
 	// load data from stack
-	ld1w	z7.s, p0/z, [x8, z2.s, UXTW 2]
+	ld1w	z7.s, p0/z, [x8, z12.s, UXTW 2]
 	add	x8, x8, #4
-	ld1w	z8.s, p0/z, [x8, z2.s, UXTW 2]
+	ld1w	z8.s, p0/z, [x8, z12.s, UXTW 2]
 	add	x8, x8, #4
-	ld1w	z9.s, p0/z, [x8, z2.s, UXTW 2]
+	ld1w	z9.s, p0/z, [x8, z12.s, UXTW 2]
 	add	x8, x8, #4
-	ld1w	z10.s, p0/z, [x8, z2.s, UXTW 2]
+	ld1w	z10.s, p0/z, [x8, z12.s, UXTW 2]
 	add	x8, x8, #4
 
 	round_x4_01  z3, z4, z5, z6, z7, z8, z9, z10, z0, z1

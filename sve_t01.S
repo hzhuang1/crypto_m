@@ -25,13 +25,17 @@
 	// tmp: jobs[1].result_digest, ranges from 0, ...
 	add	\tmp, \tmp, #16
 	// Read 128-bit seed value
-	ld1	{v0.16b}, [\tmp]
+	ld1	{v7.16b}, [\tmp]
 	// Save 128-bit seed value in the continous buffer
-	st1	{v0.16b}, [\dst], #16
+	st1	{v7.16b}, [\dst], #16
 	subs	\cnt, \cnt, #1
 	bne	101b
 .endm
 
+/*
+ * IN: jobs, job_cnt, buffer, block_idx
+ * OUT: src, dst, tmp, cnt, t1, t2, t3, t4
+ */
 .macro load_block_from_jobs_01  jobs:req, job_cnt:req, buffer:req, block_idx:req, src:req, dst:req, tmp:req, cnt:req, t1:req, t2:req, t3:req, t4:req
 	// Avoid to use jobs and buffer directly. Since it may be used
 	// in multiple times.
@@ -43,12 +47,58 @@
 	ldr	\tmp, [\src], #8
 	// tmp: jobs[i].buffer, ranges from 0, ...
 	ldr	\tmp, [\tmp]
-	// tmp: block address in job[i].buffer
-	add	\tmp, \tmp, \block_idx, lsl #6
+	// tmp: block address in job[i].buffer (offset: 256-byte)
+	//add	\tmp, \tmp, \block_idx, lsl #8
+/*
 	ld1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\tmp]
 	st1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\dst], 64
+*/
+/*
+	// 512-bit
+	ld1w	z11.s, p0/z, [\tmp]
+	st1w	z11.s, p0, [\dst]
+	add	\tmp, \tmp, #16
+	add	\dst, \dst, #16
+	// 512-bit
+	ld1w	z11.s, p0/z, [\tmp]
+	st1w	z11.s, p0, [\dst]
+	add	\tmp, \tmp, #16
+	add	\dst, \dst, #16
+	// 512-bit
+	ld1w	z11.s, p0/z, [\tmp]
+	//st1w	z11.s, p0, [\dst]
+	add	\tmp, \tmp, #16
+	add	\dst, \dst, #16
+	// 512-bit
+	ld1w	z11.s, p0/z, [\tmp]
+	st1w	z11.s, p0, [\dst]
+	add	\tmp, \tmp, #16
+	add	\dst, \dst, #16
+*/
+	mov	x13, #256
+	//mov	x13, #128
+110:
+	ldr	x12, [\tmp], #8
+	str	x12, [\dst], #8
+	subs	x13, x13, #8
+	bne	110b
 	subs	\cnt, \cnt, #1
 	bne	102b
+.endm
+
+.macro save_seed_to_jobs_01  jobs:req, job_cnt, buffer:req, src:req, dst:req, tmp:req, cnt:req
+	mov	\src, \buffer
+	mov	\dst, \jobs
+	mov	\cnt, \job_cnt
+103:
+	// tmp: ranges from jobs[0], jobs[1], ...
+	ldr	\tmp, [\dst], #8
+	// tmp: jobs[i].result_digest, ranges from 0, ...
+	add	\tmp, \tmp, #16
+	ld1	{v7.16b}, [\src], #16
+	st1	{v7.16b}, [\tmp]
+	subs	\cnt, \cnt, #1
+	bne	103b
 .endm
 
 /*
@@ -114,9 +164,10 @@ load_02:
 	mov	\tmp, \job_cnt, lsl #4
 	sub	\seed_buf, sp, \tmp
 	// Reserve the unified data buffer for all data lanes.
-	// Each lane costs 64-byte long.
-	mov	\tmp, \job_cnt, lsl #6
+	// Each lane costs 256-byte long.
+	mov	\tmp, \job_cnt, lsl #8
 	sub	\data_buf, \seed_buf, \tmp
+	sub	\data_buf, \data_buf, \tmp
 	mov	sp, \data_buf
 .endm
 
@@ -220,6 +271,100 @@ load_stack_02:
 	ldp	x29, x30, [sp], #48
 	ret
 	.size load_stack_02, .-load_stack_02
+
+/*
+ * void load_stack_03(XXH32_JOB **jobs, int job_cnt, int block_cnt, void *buf);
+ */
+	.global load_stack_03
+	.type load_stack_03, %function
+load_stack_03:
+	stp	x29, x30, [sp, #-48]!
+	stp	x12, x13, [sp, #16]
+	mov	x29, sp
+	cbz	x2, 90f
+
+	// x4 (updated): seed_buf in stack
+	// x5 (updated): data_buf in stack
+	// xxh32_create_stack_buf_01(job_cnt, seed_buf, data_buf, tmp);
+	xxh32_create_stack_buf_01  x1, x4, x5, x6
+
+	// w1 (RD-only): job_cnt
+	whilelo	p0.s, wzr, w1
+	// init_index_02(idx, tmp);
+	init_index_02 z2, w6
+
+	// x8: PRIME address
+	adr	x8, XXH32_PRIME
+	// x6/Z0: PRIME32_01
+	ldr	x6, [x8], 4
+	mov	z0.s, p0/m, w6
+	// x6/Z1: PRIME32_02
+	ldr	x6, [x8]
+	mov	z1.s, p0/m, w6
+	ptrue	p1.b
+
+	// x11: block index
+	mov	x11, #0
+10:
+	// load_block_from_jobs_01(jobs, job_cnt, buffer, block_idx, src, dst, tmp, cnt, t1, t2, t3, t4);
+	//load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v1, v2, v3, v4
+	load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v11, v12, v13, v14
+
+	mov	x8, x5
+	// x10: block size
+	//mov	x10, #64	// 64-word = 64 * 32-bit = 2048-bit
+	mov	x10, #16
+	// debug start
+	mov	x9, #0x20
+	mov	z11.s, p0/m, w9
+	mov	x9, x3
+	// debug end
+/*
+	// dump data in stack
+15:
+	//mov	x10, #16
+17:
+	mov	x6, #256
+19:
+	ldr	x7, [x8], #8
+	str	x7, [x9], #8
+	subs	x6, x6, #8
+	bne	19b
+	//subs	x10, x10, #1
+	//bne	17b
+	subs	x1, x1, #1
+	bne	15b
+	b	90f
+	// dump data in stack end
+*/
+20:
+	// load data from stack
+	ld1w	z7.s, p0/z, [x8, z2.s, UXTW 2]
+	add	x8, x8, #4
+	ld1w	z8.s, p0/z, [x8, z2.s, UXTW 2]
+	add	x8, x8, #4
+	ld1w	z9.s, p0/z, [x8, z2.s, UXTW 2]
+	add	x8, x8, #4
+	ld1w	z10.s, p0/z, [x8, z2.s, UXTW 2]
+	add	x8, x8, #4
+
+	st1b	z7.b, p1, [x9]
+	//subs	x10, x10, #4
+	subs	x10, x10, #1
+	add	x9, x9, #64
+	st1b	z8.b, p1, [x9]
+	add	x9, x9, #64
+	st1b	z9.b, p1, [x9]
+	add	x9, x9, #64
+	st1b	z10.b, p1, [x9]
+	add	x9, x9, #64
+	bne	20b
+90:
+	xxh32_free_stack_buf_01
+	ldp	x12, x13, [sp, #16]
+	ldp	x29, x30, [sp], #48
+	ret
+	.size load_stack_03, .-load_stack_03
 
 /*
  * void rev_01(unsigned char *in, unsigned char *out);
@@ -455,6 +600,7 @@ round32_04:
 	// load seed v4
 	ld1w	z6.s, p0/z, [x4, z2.s, UXTW 0]
 	add	x4, x4, #4
+	//mov	x5, #36
 .loop04:
 	cbz	x5, .return04
 	// load IN for v1
@@ -480,7 +626,7 @@ round32_04:
 	// Z1: PRIME32_02
 	mov	z1.s, p0/m, w2
 	round_x4_01  z3, z4, z5, z6, z7, z8, z9, z10, z0, z1
-	sub	x5, x5, #4
+	sub	x5, x5, #16
 	b	.loop04
 .return04:
 	st1w	z3.s, p0, [x0, z2.s, UXTW 0]
@@ -491,9 +637,150 @@ round32_04:
 	add	x0, x0, #4
 	st1w	z6.s, p0, [x0, z2.s, UXTW 0]
 	add	x0, x0, #4
+/*
+	ptrue	p1.b
+	st1b	z3.b, p1, [x0]
+	add	x0, x0, #64
+	st1b	z4.b, p1, [x0]
+	add	x0, x0, #64
+	st1b	z5.b, p1, [x0]
+	add	x0, x0, #64
+	st1b	z6.b, p1, [x0]
+	add	x0, x0, #64
+*/
 	ret
 	.size round32_04, .-round32_04
 
+/*
+ * void stack_round_01(void **jobs, int job_cnt, int block_cnt, void *buf);
+ */
+	.global stack_round_01
+	.type stack_round_01, %function
+stack_round_01:
+	stp	x29, x30, [sp, #-48]!
+	mov	x29, sp
+	cbz	x2, 90f
+
+	// x4 (updated): seed_buf in stack
+	// x5 (updated): data_buf in stack
+	// xxh32_create_stack_buf_01(job_cnt, seed_buf, data_buf, tmp);
+	xxh32_create_stack_buf_01  x1, x4, x5, x6
+
+	// w1 (RD-only): job_cnt
+	whilelo	p0.s, wzr, w1
+	// init_index_02(idx, tmp);
+	init_index_02 z2, w6
+
+	// x8: PRIME address
+	adr	x8, XXH32_PRIME
+	// x6/Z0: PRIME32_01
+	ldr	x6, [x8], 4
+	mov	z0.s, p0/m, w6
+	// x6/Z1: PRIME32_02
+	ldr	x6, [x8]
+	mov	z1.s, p0/m, w6
+	ptrue	p1.b
+	mov	x9, x3
+
+	// load_seed_from_jobs_01(jobs, job_cnt, buffer, src, dst, tmp, cnt);
+	// x4 (RD-only): seed_buf in stack
+	load_seed_from_jobs_01  x0, x1, x4, x7, x8, x6, x10
+
+	// load seed from stack
+	// x7: seed_buf
+	mov	x7, x4
+	ld1w	z3.s, p0/z, [x7, z2.s, UXTW 0]
+	add	x7, x7, #4
+	ld1w	z4.s, p0/z, [x7, z2.s, UXTW 0]
+	add	x7, x7, #4
+	ld1w	z5.s, p0/z, [x7, z2.s, UXTW 0]
+	add	x7, x7, #4
+	ld1w	z6.s, p0/z, [x7, z2.s, UXTW 0]
+
+	// x11: block index
+	mov	x11, #0
+10:
+	// load_block_from_jobs_01(jobs, job_cnt, buffer, block_idx, src, dst, tmp, cnt, t1, t2, t3, t4);
+	//load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v1, v2, v3, v4
+	load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v11, v12, v13, v14
+
+	mov	x8, x5
+	// x10: block size
+	mov	x10, #16	// 2048 bit / 128 bit-per-row = 16 row
+20:
+	// load data from stack
+	ld1w	z7.s, p0/z, [x8, z2.s, UXTW 2]
+	add	x8, x8, #4
+	ld1w	z8.s, p0/z, [x8, z2.s, UXTW 2]
+	add	x8, x8, #4
+	ld1w	z9.s, p0/z, [x8, z2.s, UXTW 2]
+	add	x8, x8, #4
+	ld1w	z10.s, p0/z, [x8, z2.s, UXTW 2]
+	add	x8, x8, #4
+
+	round_x4_01  z3, z4, z5, z6, z7, z8, z9, z10, z0, z1
+	subs	x10, x10, #1
+	str	x8, [x3], #8
+	bne	20b
+/*
+	st1w	z3.s, p0, [x3]
+	add	x3, x3, #4
+	st1w	z4.s, p0, [x3]
+	add	x3, x3, #4
+	st1w	z5.s, p0, [x3]
+	add	x3, x3, #4
+	st1w	z6.s, p0, [x3]
+	add	x3, x3, #4
+	st1w	z3.s, p0, [x3, z2.s, UXTW 0]
+	add	x3, x3, #4
+	st1w	z4.s, p0, [x3, z2.s, UXTW 0]
+	add	x3, x3, #4
+	st1w	z5.s, p0, [x3, z2.s, UXTW 0]
+	add	x3, x3, #4
+	st1w	z6.s, p0, [x3, z2.s, UXTW 0]
+	add	x3, x3, #4
+	b	90f
+*/
+/*
+	add	x11, x11, #1
+	cmp	x11, x2
+	bne	10b
+*/
+
+	// save seeds into seed_buf
+	mov	x8, x4
+	st1w	z3.s, p0, [x8, z2.s, UXTW 0]
+	add	x8, x8, #4
+	st1w	z4.s, p0, [x8, z2.s, UXTW 0]
+	add	x8, x8, #4
+	st1w	z5.s, p0, [x8, z2.s, UXTW 0]
+	add	x8, x8, #4
+	st1w	z6.s, p0, [x8, z2.s, UXTW 0]
+	// save seeds into jobs
+	save_seed_to_jobs_01  x0, x1, x4, x7, x8, x6, x10
+90:
+/*
+	//st1b	z2.b, p1, [x3]
+	mov	x7, x5
+	mov	x8, x3
+	mov	x6, x1, lsl #6
+91:
+	ldr	x10, [x7], #4
+	str	x10, [x8], #4
+	subs	x6, x6, #4
+	bne	91b
+	mov	x6, x1, lsl #4
+92:
+	ldr	x10, [x7], #4
+	str	x10, [x8], #4
+	subs	x6, x6, #4
+	bne	92b
+*/
+
+	xxh32_free_stack_buf_01
+	ldp	x29, x30, [sp], #48
+	ret
+	.size stack_round_01, .-stack_round_01
 
 /*
  * void load_seed_01(void **jobs, int job_cnt, void *buffer);

@@ -751,11 +751,9 @@ stack_round_01:
 	add	x3, x3, #4
 	b	90f
 */
-/*
 	add	x11, x11, #1
 	cmp	x11, x2
 	bne	10b
-*/
 
 	// save seeds into seed_buf
 	mov	x8, x4

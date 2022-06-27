@@ -55,7 +55,7 @@
 	// tmp: jobs[i].buffer, ranges from 0, ...
 	ldr	\tmp, [\tmp]
 	// tmp: block address in job[i].buffer (offset: 256-byte)
-	//add	\tmp, \tmp, \block_idx, lsl #8
+	add	\tmp, \tmp, \block_idx, lsl #8
 /*
 	ld1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\tmp]
 	st1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\dst], 64
@@ -82,8 +82,8 @@
 	add	\tmp, \tmp, #16
 	add	\dst, \dst, #16
 */
+	// Each data lane is 256-byte long.
 	mov	x13, #256
-	//mov	x13, #128
 110:
 	ldr	x12, [\tmp], #8
 	str	x12, [\dst], #8

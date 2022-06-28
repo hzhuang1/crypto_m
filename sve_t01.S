@@ -14,7 +14,7 @@
 
 // for IN data
 .macro init_index_03 idx:req, tmp:req
-	mov	\tmp, 64
+	mov	\tmp, 256
 	index	\idx\().s, #0, \tmp
 .endm
 
@@ -611,17 +611,17 @@ round32_04:
 .loop04:
 	cbz	x5, .return04
 	// load IN for v1
-	ld1w	z7.s, p0/z, [x1, z12.s, UXTW 2]
+	ld1w	z7.s, p0/z, [x1, z12.s, UXTW 0]
 	mov	z11.d, z7.d
 	add	x1, x1, #4
 	// load IN for v2
-	ld1w	z8.s, p0/z, [x1, z12.s, UXTW 2]
+	ld1w	z8.s, p0/z, [x1, z12.s, UXTW 0]
 	add	x1, x1, #4
 	// load IN for v3
-	ld1w	z9.s, p0/z, [x1, z12.s, UXTW 2]
+	ld1w	z9.s, p0/z, [x1, z12.s, UXTW 0]
 	add	x1, x1, #4
 	// load IN
-	ld1w	z10.s, p0/z, [x1, z12.s, UXTW 2]
+	ld1w	z10.s, p0/z, [x1, z12.s, UXTW 0]
 	add	x1, x1, #4
 	// x3: PRIME address
 	adr	x3, XXH32_PRIME
@@ -719,13 +719,13 @@ stack_round_01:
 	mov	x10, #16	// 2048 bit / 128 bit-per-row = 16 row
 20:
 	// load data from stack
-	ld1w	z7.s, p0/z, [x8, z12.s, UXTW 2]
+	ld1w	z7.s, p0/z, [x8, z12.s, UXTW 0]
 	add	x8, x8, #4
-	ld1w	z8.s, p0/z, [x8, z12.s, UXTW 2]
+	ld1w	z8.s, p0/z, [x8, z12.s, UXTW 0]
 	add	x8, x8, #4
-	ld1w	z9.s, p0/z, [x8, z12.s, UXTW 2]
+	ld1w	z9.s, p0/z, [x8, z12.s, UXTW 0]
 	add	x8, x8, #4
-	ld1w	z10.s, p0/z, [x8, z12.s, UXTW 2]
+	ld1w	z10.s, p0/z, [x8, z12.s, UXTW 0]
 	add	x8, x8, #4
 
 	round_x4_01  z3, z4, z5, z6, z7, z8, z9, z10, z0, z1

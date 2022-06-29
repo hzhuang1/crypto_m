@@ -31,6 +31,7 @@ extern void round32_04(void *seed_buf, void *data_buf, int block_sz, int job_cnt
 extern int stack_round_01(XXH32_JOB **jobs, int job_cnt, int block_cnt, void *buf);
 extern void load_seed_01(void **jobs, int job_cnt, void *buffer);
 extern void load_block_01(void **jobs, int job_cnt, void *buffer, int block_idx);
+extern int xxh32_mb_sve(XXH32_JOB **jobs, int job_cnt, int block_cnt, void *buf);
 
 #define xxh_rotl32(x, r) ((x << r) | (x >> (32 - r)))
 
@@ -138,6 +139,7 @@ void t_load_stack_01(void)
 	uint32_t *pseed, *pin;
 	uint32_t v[4], cntw;
 
+	printf("%s():\n");
 	seed_size = XXH32_DIGEST_NWORDS * 4;
 	for (i = 0; i < XXH32_MAX_JOBS; i++) {
 		job_vec[i] = alloc_job(XXH32_BLOCK_SIZE, i * 10000);
@@ -231,33 +233,36 @@ void t_stack_round_01(void)
 {
 	XXH32_JOB *job_vec[XXH32_MAX_JOBS];
 	void *buf;
-	int i, j, m, block_cnt = 2;
+	int i, j, m, block_cnt = 2, job_cnt = 1;
 	size_t seed_size;
 	uint32_t *pseed, *pin;
 	uint32_t v[4], cntw;
 	int ret;
 
+	printf("%s():\n");
+	if (job_cnt > XXH32_MAX_JOBS)
+		job_cnt = XXH32_MAX_JOBS;
 	seed_size = XXH32_DIGEST_NWORDS * 4;
-	for (i = 0; i < XXH32_MAX_JOBS; i++) {
+	for (i = 0; i < job_cnt; i++) {
 		job_vec[i] = alloc_job(XXH32_BLOCK_SIZE * 2, i * 10000);
 		if (!job_vec[i])
 			goto out;
 	}
-	buf = calloc(1, XXH32_MAX_JOBS * (seed_size + XXH32_BLOCK_SIZE));
+	buf = calloc(1, job_cnt * (seed_size + XXH32_BLOCK_SIZE));
 	if (!buf)
 		goto out_seed;
-	ret = stack_round_01(job_vec, XXH32_MAX_JOBS, block_cnt, buf);
+	ret = stack_round_01(job_vec, job_cnt, block_cnt, buf);
 	printf("ret:0x%lx\n", ret);
-	dump_buf(buf, XXH32_MAX_JOBS * (seed_size + XXH32_BLOCK_SIZE));
-	for (i = 0; i < XXH32_MAX_JOBS; i++)
+	dump_buf(buf, job_cnt * (seed_size + XXH32_BLOCK_SIZE));
+	for (i = 0; i < job_cnt; i++)
 		dump_buf(job_vec[i]->result_digest, seed_size);
 		//dump_buf(job_vec[i]->buffer, XXH32_BLOCK_SIZE);
 	free(buf);
-	for (i = 0; i < XXH32_MAX_JOBS; i++)
+	for (i = 0; i < job_cnt; i++)
 		free_job(job_vec[i]);
 	return;
 out_seed:
-	i = XXH32_MAX_JOBS;
+	i = job_cnt;
 out:
 	for (; i > 0; i--)
 		free_job(job_vec[i - 1]);
@@ -618,39 +623,41 @@ void sample_round_05(void)
 {
 	XXH32_JOB *job_vec[XXH32_MAX_JOBS];
 	void *seed_buf, *data_buf;
-	int i, j, block_cnt = 2, m;
+	int i, j, block_cnt = 2, job_cnt = 1, m;
 	size_t seed_size;
 	uint32_t *pseed, *pin;
 	uint32_t v[4], cntw;
 
-	printf("%s:\n", __func__);
+	printf("%s():\n", __func__);
+	if (job_cnt > XXH32_MAX_JOBS)
+		job_cnt = XXH32_MAX_JOBS;
 	seed_size = XXH32_DIGEST_NWORDS * 4;
-	for (i = 0; i < XXH32_MAX_JOBS; i++) {
+	for (i = 0; i < job_cnt; i++) {
 		job_vec[i] = alloc_job(XXH32_BLOCK_SIZE * 2, i * 10000);
 		if (!job_vec[i])
 			goto out;
 	}
-	seed_buf = calloc(1, XXH32_MAX_JOBS * seed_size);
+	seed_buf = calloc(1, job_cnt * seed_size);
 	if (!seed_buf)
 		goto out_seed;
-	data_buf = calloc(1, XXH32_MAX_JOBS * XXH32_BLOCK_SIZE);
+	data_buf = calloc(1, job_cnt * XXH32_BLOCK_SIZE);
 	if (!data_buf)
 		goto out_data;
 	cntw = dump_cntw();
 	/* copy seeds into one seed_buf */
-	for (i = 0; i < XXH32_MAX_JOBS; i++) {
+	for (i = 0; i < job_cnt; i++) {
 		memcpy(seed_buf + (i * XXH32_DIGEST_NWORDS * 4),
 			job_vec[i]->result_digest,
 			seed_size);
 	}
 	for (m = 0; m < block_cnt; m++) {
 		/* copy data into one data_buf */
-		for (i = 0; i < XXH32_MAX_JOBS; i++) {
+		for (i = 0; i < job_cnt; i++) {
 			memcpy(data_buf + (i * XXH32_BLOCK_SIZE),
 				job_vec[i]->buffer + m * XXH32_BLOCK_SIZE,
 				XXH32_BLOCK_SIZE);
 		}
-		for (i = 0; i < XXH32_MAX_JOBS; i++) {
+		for (i = 0; i < job_cnt; i++) {
 			v[0] = job_vec[i]->result_digest[0];
 			v[1] = job_vec[i]->result_digest[1];
 			v[2] = job_vec[i]->result_digest[2];
@@ -673,12 +680,12 @@ void sample_round_05(void)
 			job_vec[i]->result_digest[3] = v[3];
 		}
 	}
-	dump_buf(seed_buf, XXH32_MAX_JOBS * seed_size);
+	dump_buf(seed_buf, job_cnt * seed_size);
 	return;
 out_data:
 	free(seed_buf);
 out_seed:
-	i = XXH32_MAX_JOBS;
+	i = job_cnt;
 out:
 	for (; i > 0; i--)
 		free_job(job_vec[i - 1]);
@@ -750,12 +757,54 @@ out:
 		free_job(job_vec[i - 1]);
 }
 
+void xxh32_mb(void)
+{
+	XXH32_JOB *job_vec[XXH32_MAX_JOBS];
+	void *buf;
+	int i, j, m, block_cnt = 2, job_cnt = 1;
+	size_t seed_size;
+	uint32_t *pseed, *pin;
+	uint32_t v[4], cntw;
+	int ret;
+
+	printf("%s():\n", __func__);
+	if (job_cnt > XXH32_MAX_JOBS)
+		job_cnt = XXH32_MAX_JOBS;
+	seed_size = XXH32_DIGEST_NWORDS * 4;
+	for (i = 0; i < job_cnt; i++) {
+		job_vec[i] = alloc_job(XXH32_BLOCK_SIZE * 2, i * 10000);
+		if (!job_vec[i])
+			goto out;
+	}
+	buf = calloc(1, job_cnt * (seed_size + XXH32_BLOCK_SIZE));
+	if (!buf)
+		goto out_seed;
+	ret = xxh32_mb_sve(job_vec, job_cnt, block_cnt, buf);
+	printf("ret:0x%lx\n", ret);
+	dump_buf(buf, job_cnt * (seed_size + XXH32_BLOCK_SIZE));
+	for (i = 0; i < job_cnt; i++)
+		dump_buf(job_vec[i]->result_digest, seed_size);
+		//dump_buf(job_vec[i]->buffer, XXH32_BLOCK_SIZE);
+	free(buf);
+	for (i = 0; i < job_cnt; i++)
+		free_job(job_vec[i]);
+	return;
+out_seed:
+	i = job_cnt;
+out:
+	for (; i > 0; i--)
+		free_job(job_vec[i - 1]);
+}
+
 int main(void)
 {
-//	t_load_stack_03();
-	t_stack_round_01();
+	xxh32_mb();
 	sample_round_05();
+	t_stack_round_01();
+/*
+//	t_load_stack_03();
 	t_round_05();
+*/
 /*
 	sample_round_05();
 	t_copy_buf_01();

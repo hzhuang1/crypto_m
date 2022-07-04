@@ -730,8 +730,9 @@ stack_round_01:
 
 	round_x4_01  z3, z4, z5, z6, z7, z8, z9, z10, z0, z1
 	subs	x10, x10, #1
-	str	x8, [x3], #8
+	//str	x8, [x3], #8
 	bne	20b
+
 /*
 	st1w	z3.s, p0, [x3]
 	add	x3, x3, #4
@@ -754,6 +755,19 @@ stack_round_01:
 	add	x11, x11, #1
 	cmp	x11, x2
 	bne	10b
+
+	// dump 4 digests into output debug buffer
+	// 4 digests are in a traversed matrix
+	ptrue	p1.b
+	st1b	z3.b, p1, [x3]
+	add	x3, x3, 16
+	st1b	z4.b, p1, [x3]
+	add	x3, x3, 16
+	st1b	z5.b, p1, [x3]
+	add	x3, x3, 16
+	st1b	z6.b, p1, [x3]
+	add	x3, x3, 16
+	//b	90f
 
 	// save seeds into seed_buf
 	mov	x8, x4

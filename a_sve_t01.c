@@ -94,6 +94,7 @@ XXH32_JOB *alloc_job(size_t size, int seed)
 	job->result_digest[2] = seed + 0;
 	job->result_digest[3] = seed - PRIME32_1;
 	init_buf(job->buffer, 0x37 + ((seed >> 8) & 0x3f), size);
+	//set_buf(job->buffer, 0xa7, size);
 	return job;
 out:
 	free(job);
@@ -233,7 +234,7 @@ void t_stack_round_01(void)
 {
 	XXH32_JOB *job_vec[XXH32_MAX_JOBS];
 	void *buf;
-	int i, j, m, block_cnt = 2, job_cnt = 1;
+	int i, j, m, block_cnt = 1, job_cnt = 1;
 	size_t seed_size;
 	uint32_t *pseed, *pin;
 	uint32_t v[4], cntw;
@@ -623,7 +624,7 @@ void sample_round_05(void)
 {
 	XXH32_JOB *job_vec[XXH32_MAX_JOBS];
 	void *seed_buf, *data_buf;
-	int i, j, block_cnt = 2, job_cnt = 1, m;
+	int i, j, block_cnt = 1, job_cnt = 1, m;
 	size_t seed_size;
 	uint32_t *pseed, *pin;
 	uint32_t v[4], cntw;
@@ -761,7 +762,7 @@ void xxh32_mb(void)
 {
 	XXH32_JOB *job_vec[XXH32_MAX_JOBS];
 	void *buf;
-	int i, j, m, block_cnt = 2, job_cnt = 1;
+	int i, j, m, block_cnt = 1, job_cnt = 1;
 	size_t seed_size;
 	uint32_t *pseed, *pin;
 	uint32_t v[4], cntw;

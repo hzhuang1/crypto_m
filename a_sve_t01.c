@@ -663,12 +663,16 @@ void sample_round_05(void)
 			v[1] = job_vec[i]->result_digest[1];
 			v[2] = job_vec[i]->result_digest[2];
 			v[3] = job_vec[i]->result_digest[3];
+			//printf("pre v1:0x%x, v2:0x%x, v3:0x%x, v4:0x%x\n", v[0], v[1], v[2], v[3]);
 			pin = (uint32_t *)(data_buf + (i * XXH32_BLOCK_SIZE));
-			for (j = 0; j < cntw; j++) {
+			//printf("cntw:%d\n", cntw);
+			//for (j = 0; j < cntw; j++) {
+			for (j = 0; j < 16; j++) {
 				v[0] = xxh32_round(v[0], *(const uint32_t *)pin++);
 				v[1] = xxh32_round(v[1], *(const uint32_t *)pin++);
 				v[2] = xxh32_round(v[2], *(const uint32_t *)pin++);
 				v[3] = xxh32_round(v[3], *(const uint32_t *)pin++);
+				//printf("post v1:0x%x, v2:0x%x, v3:0x%x, v4:0x%x\n", v[0], v[1], v[2], v[3]);
 			}
 			pseed = (uint32_t *)(seed_buf + (i * XXH32_DIGEST_NWORDS * 4));
 			*(pseed + 0) = v[0];

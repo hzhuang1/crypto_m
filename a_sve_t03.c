@@ -6,11 +6,16 @@
 #define XXH_rotl64(x, r) ((x << r) | (x >> (64 - r)))
 
 #define XXH64_DIGEST_NDWORDS	4
+#define XXH64_MAX_LANES		32
+#define XXH64_BLOCK_SIZE	256
 
 typedef struct {
 	uint8_t*  buffer;       //!< pointer to data buffer for this job
 	uint32_t  blk_len;          //!< length of buffer for this job in blocks.
-	uint64_t digest[XXH64_DIGEST_NDWORDS] __attribute__((aligned(64)));
+	// Attribute caused digest field moving to ahead position.
+	// So discard attribute.
+	//uint64_t digest[XXH64_DIGEST_NDWORDS] __attribute__((aligned(32)));
+	uint64_t digest[XXH64_DIGEST_NDWORDS];
 	uint64_t  result_digest;//!< final digest
 	//JOB_STS   status;       //!< output job status
 	//void*     user_data;    //!< pointer for user's job-related data
@@ -32,6 +37,7 @@ unsigned char in[1024], out[1024];
 extern void rtl64_01(unsigned char *in, unsigned char *out);
 extern void round64_01(unsigned char *acc, unsigned char *input);
 extern void mround64_01(unsigned char *acc, unsigned char *val);
+extern void load_stack_01(XXH64_JOB **job_vecs, int job_cnt, int blk_cnt, void *buf);
 
 void set_buf(unsigned char *buf, unsigned char val, size_t len)
 {
@@ -66,7 +72,6 @@ void dump_buf(unsigned char *buf, size_t len)
 	}
 }
 
-#if 0
 XXH64_JOB *alloc_job(size_t size, int seed)
 {
 	XXH64_JOB *job;
@@ -76,7 +81,7 @@ XXH64_JOB *alloc_job(size_t size, int seed)
 	job = calloc(1, sizeof(XXH64_JOB));
 	if (!job)
 		return NULL;
-	job->len = size;
+	job->blk_len = (size + XXH64_BLOCK_SIZE - 1) / XXH64_BLOCK_SIZE;
 	job->buffer = calloc(1, size);
 	if (!job->buffer)
 		goto out;
@@ -84,8 +89,8 @@ XXH64_JOB *alloc_job(size_t size, int seed)
 	job->digest[1] = seed + PRIME64_2;
 	job->digest[2] = seed + 0;
 	job->digest[3] = seed - PRIME64_1;
-	init_buf(job->buffer, 0x37 + ((seed >> 8) & 0x3f), size);
-	//set_buf(job->buffer, 0xa7, size);
+	//init_buf(job->buffer, 0x37 + ((seed >> 8) & 0x3f), size);
+	set_buf(job->buffer, 0xa7, size);
 	return job;
 out:
 	free(job);
@@ -97,7 +102,6 @@ void free_job(XXH64_JOB *job)
 	free(job->buffer);
 	free(job);
 }
-#endif
 
 static uint64_t xxh64_round(uint64_t acc, const uint64_t input)
 {
@@ -191,10 +195,54 @@ void t_merge_round_01(void)
 	dump_buf(out, 64);
 }
 
+void t_load_stack_01(void)
+{
+	XXH64_JOB *job_vec[XXH64_MAX_LANES];
+	void *buf;
+	size_t seed_size;
+	int i;
+
+	seed_size = XXH64_DIGEST_NDWORDS * 8;
+	for (i = 0; i < XXH64_MAX_LANES; i++) {
+		job_vec[i] = alloc_job(XXH64_BLOCK_SIZE, i * 10000);
+		if (!job_vec[i])
+			goto out;
+	}
+	buf = calloc(1, XXH64_MAX_LANES * (seed_size + XXH64_BLOCK_SIZE));
+	if (!buf)
+		goto out_seed;
+	{
+		void *p = buf;
+		for (int i = 0; i < 8; i++) {
+			printf("job->buffer:0x%p, job->digest[0]:0x%p\n", job_vec[i]->buffer, &job_vec[i]->digest[0]);
+			printf("digest[%d]:\n", i);
+			memcpy(p, job_vec[i]->digest, seed_size);
+			dump_buf(p, seed_size);
+			p += seed_size;
+		}
+		printf("\n");
+	}
+
+	// SVE512 / 64bit = 8 (lanes)
+	load_stack_01(job_vec, 8, 1, buf);
+	//dump_buf(buf, XXH64_MAX_LANES * (seed_size + XXH64_BLOCK_SIZE));
+	dump_buf(buf, 8 * (seed_size + XXH64_BLOCK_SIZE));
+	free(buf);
+	for (i = 0; i < XXH64_MAX_LANES; i++)
+		free_job(job_vec[i]);
+	return;
+out_seed:
+	i = XXH64_MAX_LANES;
+out:
+	for (; i > 0; i--)
+		free_job(job_vec[i - 1]);
+}
+
 int main(void)
 {
 	//t_rtl_01();
 	//t_round_01();
-	t_merge_round_01();
+	//t_merge_round_01();
+	t_load_stack_01();
 	return 0;
 }

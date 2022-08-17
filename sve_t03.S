@@ -11,6 +11,79 @@
         ldp     x29, x30, [sp], #48
 .endm
 
+// Create both seed and data buf on stack
+.macro xxh64_create_stack_buf_01  job_cnt:req, seed_buf:req, data_buf:req, tmp:req
+	// Reserve the unified seed buffer for all data lanes.
+	// Each lane costs 32-byte (64 * 4) long.
+	mov	\tmp, \job_cnt, lsl #5
+	sub	\seed_buf, sp, \tmp
+	// Reserve the unified data buffer for all data lanes.
+	// Each lane costs 256-byte long.
+	mov	\tmp, \job_cnt, lsl #8
+	sub	\data_buf, \seed_buf, \tmp
+	mov	sp, \data_buf
+.endm
+
+.macro xxh64_free_stack_buf_01
+	mov	sp, x29
+.endm
+
+// src, dst, tmp: all temporary registers
+// Load seeds from different jobs, and save them in one continuous buffer.
+.macro load_seed_from_jobs_01  jobs:req, job_cnt:req, buffer:req, src:req, dst:req, tmp:req, cnt:req
+	// Avoid to use jobs and buffer directly. Since it may be used
+	// in multiple times.
+	mov	\src, \jobs
+	mov	\dst, \buffer
+	mov	\cnt, \job_cnt
+101:
+	// tmp: ranges from jobs[0], jobs[1], ...
+	ldr	\tmp, [\src], #8
+	// tmp: jobs[1].digest, ranges from 0, ...
+	// 16 is the offset of digest field
+	add	\tmp, \tmp, #16
+	// Read 256-bit seed value (64 * 4)
+	ld1	{v7.16b}, [\tmp], 16
+	ld1	{v8.16b}, [\tmp]
+	// Save 256-bit seed value in the continous buffer
+	st1	{v7.16b}, [\dst], 16
+	st1	{v8.16b}, [\dst], 16
+	subs	\cnt, \cnt, #1
+	bne	101b
+.endm
+
+/*
+ * IN: jobs, job_cnt, buffer, block_idx
+ * OUT: src, dst, tmp, cnt, t1, t2, t3, t4
+ */
+.macro load_block_from_jobs_01  jobs:req, job_cnt:req, buffer:req, block_idx:req, src:req, dst:req, tmp:req, cnt:req, t1:req, t2:req, t3:req, t4:req
+	// Avoid to use jobs and buffer directly. Since it may be used
+	// in multiple times.
+	mov	\src, \jobs
+	mov	\dst, \buffer
+	mov	\cnt, \job_cnt
+102:
+	// tmp: ranges from jobs[0], jobs[1], ...
+	ldr	\tmp, [\src], #8
+	// tmp: jobs[i].buffer, ranges from 0, ...
+	ldr	\tmp, [\tmp]
+	// tmp: block address in job[i].buffer (offset: 256-byte)
+	add	\tmp, \tmp, \block_idx, lsl #8
+/*
+	ld1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\tmp]
+	st1	{\t1\().4s, \t2\().4s, \t3\().4s, \t4\().4s}, [\dst], 64
+*/
+	// Each data lane is 256-byte long.
+	mov	x13, #256
+110:
+	ldr	x12, [\tmp], #8
+	str	x12, [\dst], #8
+	subs	x13, x13, #8
+	bne	110b
+	subs	\cnt, \cnt, #1
+	bne	102b
+.endm
+
 /*
  * void rtl64_01(unsigned char *in, int bits);
  * Load data from param INOUT into Z0 register.
@@ -99,6 +172,43 @@ mround64_01:
 	ret
 	.size mround64_01, .-mround64_01
 
+
+// void load_stack_01(XXH64_JOB **job_vec, int job_cnt, int blocks, void *buf)
+	.global load_stack_01
+	.type load_stack_01, %function
+load_stack_01:
+	xxh64_sve_save_stack
+	// xxh64_create_stack_buf_01(int job_cnt, void *seed_buf, void *data_buf, void *tmp)
+	xxh64_create_stack_buf_01  x1, x4, x5, x6
+	// load_seed_from_jobs_01(jobs, job_cnt, buffer, src, dst, tmp, cnt);
+	// src, dst, tmp, cnt are temporary registers
+	load_seed_from_jobs_01  x0, x1, x4, x7, x8, x6, x10
+	// load_block_from_jobs_01(jobs, job_cnt, buffer, block_idx, src, dst, tmp, cnt, t1, t2, t3, t4);
+	mov	x11, #0
+	load_block_from_jobs_01  x0, x1, x5, x11, x7, x8, x6, x10, v1, v2, v3, v4
+
+	// copy data from stack to external buffer to test
+	mov	x6, x1, lsl #8
+	// x5: data_buf
+	mov	x7, x5
+	mov	x8, x3
+10:
+	ldr	x9, [x7], #8
+	str	x9, [x8], #8
+	subs	x6, x6, #8
+	bne	10b
+	// copy seeds from stack to external buffer to test
+	mov	x6, x1, lsl #5
+20:
+	ldr	x9, [x7], #8
+	str	x9, [x8], #8
+	subs	x6, x6, #8
+	bne	20b
+
+	xxh64_free_stack_buf_01
+	xxh64_sve_restore_stack
+	ret
+	.size load_stack_01, .-load_stack_01
 
 // void xxh64_mb_sve(XXH64_JOB **job_vec, int job_cnt, int blocks)
         .global xxh64_mb_sve

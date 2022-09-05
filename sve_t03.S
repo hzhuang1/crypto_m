@@ -106,7 +106,7 @@
  * IN: jobs, job_cnt, buffer, block_idx
  * OUT: src, dst, tmp, cnt, t1, t2, t3, t4
  */
-.macro load_block_from_jobs_01  jobs:req, job_cnt:req, blk_idx:req, buf:req, src:req, dst:req, tmp:req, cnt:req, t1:req, t2:req, t3:req, t4:req
+.macro load_block_from_jobs_01  jobs:req, job_cnt:req, blk_idx:req, buf:req, src:req, dst:req, tmp:req, cnt:req/*, t1:req, t2:req, t3:req, t4:req */
 	// Avoid to use jobs and buffer directly. Since it may be used
 	// in multiple times.
 	mov	\src, \jobs
@@ -165,9 +165,29 @@
         add     \tmp, \tmp, #8
 .endm
 
+.macro xxh64_save_seed_to_jobs  job_vec:req, job_cnt:req, buffer:req, src:req, dst:req, tmp:req, cnt:req
+	// Avoid to use jobs and buffer directly. Since it may be used
+	// in multiple times.
+	mov	\src, \buffer
+	mov	\dst, \job_vec
+	mov	\cnt, \job_cnt
+130:
+	// tmp: ranges from jobs[0], jobs[1], ...
+	ldr	\tmp, [\dst], 8
+	// tmp: jobs[i].digest, ranges from 0, ...
+	add	\tmp, \tmp, 16
+	// Read 256-bit seed value (64 * 4)
+	ld1	{v7.16b}, [\src], 16
+	ld1	{v8.16b}, [\src], 16
+	st1	{v7.16b}, [\tmp], 16
+	st1	{v8.16b}, [\tmp]
+	subs	\cnt, \cnt, 1
+	bne	130b
+.endm
+
 
 .macro xxh64_single  jobs:req, job_cnt:req, blk_idx:req, buf:req, didx:req, prm1:req, prm2:req, prm4:req, s1:req, s2:req, s3:req, s4:req, in1:req, in2:req, in3:req, in4:req, src:req, dst:req, tmp:req, cnt:req
-	load_block_from_jobs_01  \jobs, \job_cnt, \blk_idx, \buf, \src, \dst, \tmp, \cnt, \in1, \in2, \in3, \in4
+	load_block_from_jobs_01  \jobs, \job_cnt, \blk_idx, \buf, \src, \dst, \tmp, \cnt /*, \in1, \in2, \in3, \in4*/
 	// Each lane loads 8 * 4 = 32 (bytes) data.
 	// 256 / 32 = 8
         mov     \cnt, #8
@@ -282,7 +302,7 @@ load_stack_01:
 	load_seed_from_jobs_01  x0, x1, x4, x7, x8, x6, x10
 	// load_block_from_jobs_01(jobs, job_cnt, blk_idx, buffer, src, dst, tmp, cnt, t1, t2, t3, t4);
 	mov	x11, #0
-	load_block_from_jobs_01  x0, x1, x11, x5, x7, x8, x6, x10, v1, v2, v3, v4
+	load_block_from_jobs_01  x0, x1, x11, x5, x7, x8, x6, x10/*, v1, v2, v3, v4*/
 
 	// copy data from stack to external buffer to test
 	mov	x6, x1, lsl #8
@@ -344,7 +364,7 @@ load_stack_02:
 	mov	x11, #0
 10:
 	// load_block_from_jobs_01(jobs, job_cnt, blk_idx, buf, src, dst, tmp, cnt, t1, t2, t3, t4);
-	load_block_from_jobs_01  x0, x1, x11, x5, x7, x8, x6, x10, v11, v12, v13, v14
+	load_block_from_jobs_01  x0, x1, x11, x5, x7, x8, x6, x10/*, v11, v12, v13, v14 */
 
 	// debug
 	//st1b	z0.b, p1, [x3]
@@ -382,6 +402,68 @@ load_stack_02:
 	.global single_01
 	.type single_01, %function
 single_01:
+        xxh64_sve_save_stack
+	cbz	x2, 90f
+
+	// x4 (updated): seed_buf in stack
+	// x5 (updated): data_buf in stack
+	// xxh64_create_stack_buf_01(job_cnt, seed_buf, data_buf, tmp);
+	xxh64_create_stack_buf_01  x1, x4, x5, x6
+
+	// w1 (RD-only): job_cnt
+	whilelo	p0.d, wzr, w1
+	ptrue	p1.b
+	// init_seed_index(idx, tmp);
+	// Z3: index of seed
+	// Z4: index of data
+	init_seed_index  z3, x6
+        init_data_index  z4, x6
+
+        load_seed_from_jobs_01  x0, x1, x4, x7, x8, x6, x10
+        // Load sparse seeds into vector registers [Z5 - Z8].
+        xxh64_sparse_load  x4, z3, z5, z6, z7, z8, x6
+
+	// x8: PRIME address
+	adr	x8, XXH64_PRIME
+	// x6 & Z0: PRIME64_01
+	ldr	x6, [x8], 8
+	mov	z0.d, p1/m, x6
+	// x6 & Z1: PRIME64_02
+	ldr	x6, [x8], 16
+	mov	z1.d, p1/m, x6
+	// x6 & Z2: PRIME64_04
+	ldr	x6, [x8]
+	mov	z2.d, p1/m, x6
+	ptrue	p1.b
+
+	// x11: block index
+	mov	x11, #0
+10:
+        xxh64_single  x0, x1, x11, x5, z4, z0, z1, z2, z5, z6, z7, z8, z9, z10, z11, z12, x7, x8, x6, x10
+        add     x11, x11, #1
+        cmp     x11, x2
+        bne     10b
+	//ptrue	p1.b
+	st1b	z5.b, p1, [x3]
+	add	x3, x3, 32
+	st1b	z6.b, p1, [x3]
+	add	x3, x3, 32
+	st1b	z7.b, p1, [x3]
+	add	x3, x3, 32
+	st1b	z8.b, p1, [x3]
+	add	x3, x3, 32
+
+90:
+	xxh64_free_stack_buf_01
+        xxh64_sve_restore_stack
+	ret
+	.size single_01, .-single_01
+
+
+// void single_02(XXH64_JOB **job_vecs, int job_cnt, int blocks, void *buf)
+	.global single_02
+	.type single_02, %function
+single_02:
         xxh64_sve_save_stack
 	cbz	x2, 90f
 
@@ -432,11 +514,16 @@ single_01:
 	st1b	z8.b, p1, [x3]
 	add	x3, x3, 32
 
+	// Save sparse seeds from vector registers to a memory block.
+	xxh64_sparse_save  x4, z3, z5, z6, z7, z8, x6
+	// Save sparse seeds back into job_vec.
+	xxh64_save_seed_to_jobs  x0, x1, x4, x7, x8, x6, x10
+
 90:
 	xxh64_free_stack_buf_01
         xxh64_sve_restore_stack
 	ret
-	.size single_01, .-single_01
+	.size single_02, .-single_02
 
 
 // void xxh64_mb_sve(XXH64_JOB **job_vec, int job_cnt, int blocks)

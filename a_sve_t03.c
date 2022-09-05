@@ -40,6 +40,7 @@ extern void mround64_01(unsigned char *acc, unsigned char *val);
 extern void load_stack_01(XXH64_JOB **job_vecs, int job_cnt, int blk_cnt, void *buf);
 extern void load_stack_02(XXH64_JOB **job_vecs, int job_cnt, int blk_cnt, void *buf);
 extern void single_01(XXH64_JOB **job_vecs, int job_cnt, int blk_cnt, void *buf);
+extern void single_02(XXH64_JOB **job_vecs, int job_cnt, int blk_cnt, void *buf);
 
 void set_buf(unsigned char *buf, unsigned char val, size_t len)
 {
@@ -92,6 +93,7 @@ XXH64_JOB *alloc_job(size_t size, int seed)
 	job->digest[2] = seed + 0;
 	job->digest[3] = seed - PRIME64_1;
 	init_buf(job->buffer, 0x37 + ((seed >> 8) & 0x3f), size);
+	//init_buf(job->buffer, 0x37, size);
 	//set_buf(job->buffer, 0xa7, size);
 	return job;
 out:
@@ -290,9 +292,74 @@ void t_single_01(void)
 	if (!buf)
 		goto out_seed;
 
+printf("%s, %d, v1:0x%lx, v2:0x%lx, v3:0x%lx, v4:0x%lx\n", __func__, __LINE__, job_vec[0]->digest[0], job_vec[0]->digest[1], job_vec[0]->digest[2], job_vec[0]->digest[3]);
 	printf("ASM version:\n");
 	// SVE512 / 64bit = 8 (lanes)
-	single_01(job_vec, 4, 1, buf);
+	memset(buf, 0, 2 * (seed_size + XXH64_BLOCK_SIZE));
+	single_01(job_vec, 1, 1, buf);
+	//dump_buf(buf, XXH64_MAX_LANES * (seed_size + XXH64_BLOCK_SIZE));
+	dump_buf(buf, 1 * (seed_size + XXH64_BLOCK_SIZE));
+	printf("C version:\n");
+	{
+		for (i = 0; i < XXH64_MAX_LANES; i++) {
+			uint64_t v1, v2, v3, v4;
+			uint8_t *p = (uint8_t *)job_vec[i]->buffer;
+			uint8_t *end = p + XXH64_BLOCK_SIZE;
+
+			v1 = job_vec[i]->digest[0];
+			v2 = job_vec[i]->digest[1];
+			v3 = job_vec[i]->digest[2];
+			v4 = job_vec[i]->digest[3];
+			seed = i * 10000;
+			init_buf(job_vec[i]->buffer,
+				0x37 + ((seed >> 8) & 0x3f),
+				XXH64_BLOCK_SIZE);
+			do {
+				v1 = xxh64_round(v1, *(uint64_t *)p);
+				p += 8;
+				v2 = xxh64_round(v2, *(uint64_t *)p);
+				p += 8;
+				v3 = xxh64_round(v3, *(uint64_t *)p);
+				p += 8;
+				v4 = xxh64_round(v4, *(uint64_t *)p);
+				p += 8;
+			} while (p < end);
+			printf("lane %d: %lx-%lx-%lx-%lx\n",
+				i, v1, v2, v3, v4);
+		}
+	}
+	free(buf);
+	for (i = 0; i < XXH64_MAX_LANES; i++)
+		free_job(job_vec[i]);
+	return;
+out_seed:
+	i = XXH64_MAX_LANES;
+out:
+	for (; i > 0; i--)
+		free_job(job_vec[i - 1]);
+}
+
+void t_single_02(void)
+{
+	XXH64_JOB *job_vec[XXH64_MAX_LANES];
+	void *buf;
+	size_t seed_size;
+	int i, seed;
+
+	seed_size = XXH64_DIGEST_NDWORDS * 8;
+	for (i = 0; i < XXH64_MAX_LANES; i++) {
+		seed = i * 10000;
+		job_vec[i] = alloc_job(XXH64_BLOCK_SIZE, seed);
+		if (!job_vec[i])
+			goto out;
+	}
+	buf = calloc(1, XXH64_MAX_LANES * (seed_size + XXH64_BLOCK_SIZE));
+	if (!buf)
+		goto out_seed;
+
+	printf("ASM version:\n");
+	// SVE512 / 64bit = 8 (lanes)
+	single_02(job_vec, 4, 1, buf);
 	//dump_buf(buf, XXH64_MAX_LANES * (seed_size + XXH64_BLOCK_SIZE));
 	dump_buf(buf, 8 * (seed_size + XXH64_BLOCK_SIZE));
 	printf("C version:\n");

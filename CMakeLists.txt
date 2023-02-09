@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.10)
+project(xxh_test C ASM)
+add_executable(xxh_t01 xxh_t01.c)
+add_executable(xxh_t02 xxh_t02.c)
+add_executable(a_sve_t01 a_sve_t01.c sve_t01.S)

@@ -3,7 +3,7 @@
 
 /*
  * Zero extend on high 32-bit data in each 64-bit field.
- * void void uxtw_01(unsigned char *in, unsigned char *out)
+ * void uxtw_01(unsigned char *in, unsigned char *out)
  */
 	.global uxtw_01
 	.type uxtw_01, %function
@@ -19,7 +19,7 @@ uxtw_01:
 
 /*
  * Zero extend on high 32-bit data in each 64-bit field.
- * void void uxtw_02(unsigned char *in, unsigned char *out)
+ * void uxtw_02(unsigned char *in, unsigned char *out)
  */
 	.global uxtw_02
 	.type uxtw_02, %function
@@ -37,3 +37,18 @@ uxtw_02:
 	st1w	z1.s, p1, [x1]
 	ret
 	.size uxtw_02, .-uxtw_02
+
+/*
+ * Generate the sequence of [1,0,3,2,...].
+ * void index_01(unsigned char *out);
+ */
+	.global index_01
+	.type index_01, %function
+index_01:
+	ptrue	p7.d
+	// set z7 to [ 1, 0, 3, 2, 5, 4, ... ] for tbl to swap adjacent lanes
+	index   z7.d, #0, #1        // z7 = [ 0, 1, 2, 3, 4, 5... ]
+	eor     z7.d, z7.d, #1      // z7 = [ 1, 0, 3, 2, 5, 4... ]
+	st1d	{z7.d}, p7, [x0]
+	ret
+	.size index_01, .-index_01

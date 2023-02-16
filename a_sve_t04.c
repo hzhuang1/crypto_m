@@ -6,6 +6,7 @@
 extern void uxtw_01(unsigned char *in, unsigned char *out);
 extern void uxtw_02(unsigned char *in, unsigned char *out);
 extern void index_01(unsigned char *out);
+extern void ext_01(unsigned char *in, unsigned char *out);
 
 unsigned char in[1024], out[1024];
 
@@ -60,8 +61,17 @@ void t_index_01(void)
 	dump_buf(out, 256);
 }
 
+void t_ext_01(void)
+{
+	init_buf(in, 0x37, 1024);
+	init_buf(out, 0x55, 1024);
+	dump_buf(out, 256);
+	ext_01(in, out);
+	dump_buf(out, 256);
+}
+
 int main(void)
 {
-	t_uxtw_01();
+	t_ext_01();
 	return 0;
 }

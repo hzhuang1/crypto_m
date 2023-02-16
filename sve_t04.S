@@ -52,3 +52,16 @@ index_01:
 	st1d	{z7.d}, p7, [x0]
 	ret
 	.size index_01, .-index_01
+
+/*
+ * Exchange high 64-bit and low 64-bit for SVE128.
+ * void ext_01(unsigned char *in, unsigned char *out);
+ */
+	.global ext_01
+	.type ext_01, %function
+ext_01:
+	ldr	z0, [x0]
+	ext	z0.b, z0.b, z0.b, 8
+	str	z0, [x1]
+	ret
+	.size ext_01, .-ext_01

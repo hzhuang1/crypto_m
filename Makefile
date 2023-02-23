@@ -1,5 +1,6 @@
 CC=gcc
-CFLAGS=-Wall
+CFLAGS=-Wall -march="armv8-a+sve2"
+#CFLAGS=-Wall -msve-vector-bits=128 -march="armv8-a+sve"
 INCLUDE=-I/usr/local/include
 LDFLAGS=-lxxhash
 

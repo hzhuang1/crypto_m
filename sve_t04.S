@@ -65,3 +65,20 @@ ext_01:
 	str	z0, [x1]
 	ret
 	.size ext_01, .-ext_01
+
+/*
+ * De-interleave two vectors and format new two vectors.
+ * void unzip_01(unsigned char *in, unsigned char *out);
+ */
+	.global unzip_01
+	.type unzip_01, %function
+unzip_01:
+	ptrue	p7.d
+	ld1d	z0.d, p7/z, [x0]
+	ld1d	z1.d, p7/z, [x0, #1, MUL VL]
+	uzp1	z2.s, z0.s, z1.s
+	uzp2	z3.s, z0.s, z1.s
+	st1d	{z2.d}, p7, [x1]
+	st1d	{z3.d}, p7, [x1, #1, MUL VL]
+	ret
+	.size unzip_01, .-unzip_01

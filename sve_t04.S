@@ -1,5 +1,5 @@
 
-	.arch armv8.2-a+sve
+	.arch armv8.2-a+sve2
 
 /*
  * Zero extend on high 32-bit data in each 64-bit field.
@@ -82,3 +82,17 @@ unzip_01:
 	st1d	{z3.d}, p7, [x1, #1, MUL VL]
 	ret
 	.size unzip_01, .-unzip_01
+
+
+/*
+ * void inner_mul_01(unsigned char *in, unsigned char *secret,
+ *		unsigned char *out);
+ */
+	.global inner_mul_01
+	.type inner_mul_01, %function
+inner_mul_01:
+	ptrue	p7.d
+	ld1d	z0.d, p7/z, [x0]
+	st1d	{z0.d}, p7, [x2]
+	ret
+	.size inner_mul_01, .-inner_mul_01

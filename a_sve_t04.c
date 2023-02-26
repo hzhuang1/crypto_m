@@ -206,14 +206,16 @@ void t_inner_mul_02(void)
 	svuint64_t swapped = svtbl_u64(input_vec, kSwap);
 	svuint64_t mixed_lo = svextw_u64_x(mask, mixed);
 	svuint64_t mixed_hi = svlsr_n_u64_x(mask, mixed, 32);
-	svuint64_t mul = svmad_u64_x(mask, mixed_lo, mixed_hi, secret_vec);
-	//svuint64_t mul = svmad_u64_x(mask, mixed_lo, mixed_hi, swapped);
+	//svuint64_t mul = svmad_u64_x(mask, mixed_lo, mixed_hi, secret_vec);
+	svuint64_t mul = svmad_u64_x(mask, mixed_lo, mixed_hi, swapped);
 	svst1_u64(mask, (uint64_t *)out + 0, mul);
 #endif
 	dump_buf(out, 128);
 	printf("out[0]:0x%x\n", *(uint32_t *)out);
 }
 
+/*
+ */
 void t_inner_mul_03(void)
 {
         uint64_t *xacc = (uint64_t *)out;
@@ -302,6 +304,9 @@ void t_inner_mul_04(void)
 }
 
 /*
+typedef svuint64_t xxh_u64x2 __attribute__((arm_sve_vector_bits(128)));
+typedef svuint32_t xxh_u32x4 __attribute__((arm_sve_vector_bits(128)));
+
 void t_inner_mul_05(void)
 {
 	{
@@ -311,15 +316,39 @@ void t_inner_mul_05(void)
 		set_buf(out, 0, 1024);
 		dump_buf(in, 128);
 	}
-	inner_mul_01(in, secret, out);
+	uint64x2_t* const xacc = (uint64x2_t *)out;
+	uint8_t const* const xinput = (const uint8_t *)in;
+	uint8_t const* const xsecret = (const uint8_t *)secret;
+	uint64x2_t data_vec = vld1q_u64(xinput);
+	uint64x2_t key_vec = vld1q_u64(xsecret);
+	uint64x2_t swapped = vextq_u64(data_vec, data_vec, 1);
+	uint64x2_t mixed_lo = veorq_u64(data_vec, key_vec);
+	uint32x4_t mixed_hi = vrev64q_u32(vreinterpretq_u32_u64(mixed_lo));
+	uint64x2_t mul = (uint64x2_t)(xxh_u64x2)svmlalb_u64(
+			(xxh_u64x2)swapped,
+			(xxh_u32x4)mixed_lo,
+			(xxh_u32x4)mixed_hi);
+	xacc[0] = vreinterruptq_u32_u64(mixed_lo);
 	dump_buf(out, 128);
 }
 */
 
+void t_inner_mul_05(void)
+{
+	{
+		printf("%s:\n", __func__);
+		init_buf(in, 0x37, 1024);
+		set_buf(secret, 0x0, 1024);
+		set_buf(out, 0, 1024);
+		dump_buf(in, 128);
+	}
+	inner_mul_01(in, secret, out);
+	dump_buf(out, 128);
+}
+
 int main(void)
 {
 	t_inner_mul_02();
-	t_inner_mul_03();
-	t_inner_mul_04();
+	t_inner_mul_05();
 	return 0;
 }

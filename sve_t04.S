@@ -85,6 +85,7 @@ unzip_01:
 
 
 /*
+ * Mix NEON & SVE2 instructions only on SVE-128.
  * void inner_mul_01(unsigned char *in, unsigned char *secret,
  *		unsigned char *out);
  */
@@ -92,7 +93,47 @@ unzip_01:
 	.type inner_mul_01, %function
 inner_mul_01:
 	ptrue	p7.d
-	ld1d	z0.d, p7/z, [x0]
-	st1d	{z0.d}, p7, [x2]
+	ldr	q0, [x0]
+	ldr	q6, [x0, #16]
+	ldr	q12, [x0, #32]
+	ldr	q13, [x0, #48]
+	ldr	q1, [x1]
+	ldr	q7, [x1, #16]
+	ldr	q14, [x1, #32]
+	ldr	q15, [x1, #48]
+	ldr	q2, [x2]
+	ldr	q8, [x2, #16]
+	ldr	q16, [x2, #32]
+	ldr	q17, [x2, #48]
+	// v3, v9: swapped
+	ext	v3.16b, v0.16b, v0.16b, #8 
+	ext	v9.16b, v6.16b, v6.16b, #8
+	ext	v18.16b, v12.16b, v12.16b, #8
+	ext	v19.16b, v13.16b, v13.16b, #8
+	// v4, v10: mixed_lo
+	eor	v4.16b, v0.16b, v1.16b
+	eor	v10.16b, v6.16b, v7.16b
+	eor	v20.16b, v12.16b, v14.16b
+	eor	v21.16b, v13.16b, v15.16b
+	// v5, v11: mixed_hi
+	rev64	v5.4s, v4.4s
+	rev64	v11.4s, v10.4s
+	rev64	v22.4s, v20.4s
+	rev64	v23.4s, v21.4s
+	// z3 = z4 * z5 + z3
+	umlalb	z3.d, z4.s, z5.s
+	umlalb	z9.d, z10.s, z11.s
+	umlalb	z18.d, z20.s, z22.s
+	umlalb	z19.d, z21.s, z23.s
+	add	v2.2d, v2.2d, v3.2d
+	add	v8.2d, v8.2d, v9.2d
+	add	v16.2d, v16.2d, v18.2d
+	add	v17.2d, v17.2d, v19.2d
+	str	q2, [x2]
+	str	q8, [x2, #16]
+	str	q16, [x2, #32]
+	str	q17, [x2, #48]
+	//ld1d	z1.d, p7/z, [x1]
+	//st1d	{z0.d}, p7, [x2]
 	ret
 	.size inner_mul_01, .-inner_mul_01

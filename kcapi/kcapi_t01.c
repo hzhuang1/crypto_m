@@ -1,8 +1,12 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <kcapi.h>
 #include <openssl/evp.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/uio.h>
 
 #define MD5_DIGEST_LEN	16
 #define TEST_STRING	"hello"
@@ -29,7 +33,7 @@ int cmp_digest(uint8_t *d1, uint8_t *d2, size_t len)
 		return -EINVAL;
 
 	for (i = 0; i < len; i++) {
-		if ((d1[i] == '\0') || (d2[i] == '\0') || (d1[i] != d2[i])) {
+		if (d1[i] != d2[i]) {
 			printf("Digests are not matched.\n");
 			printf("#1:");
 			dump_digest(d1, i);
@@ -168,7 +172,7 @@ int k_md_01(unsigned char *buf, size_t len, unsigned char *digest)
 	return 0;
 }
 
-int main(void)
+int case_01(void)
 {
 	unsigned char d1[MD5_DIGEST_LEN], d2[MD5_DIGEST_LEN];
 	int ret;
@@ -178,7 +182,56 @@ int main(void)
 	ret = cmp_digest(d1, d2, MD5_DIGEST_LEN);
 	if (ret < 0)
 		return ret;
-	printf("Digests are matched.\n");
+	printf("Digests are matched. ");
 	dump_digest(d1, MD5_DIGEST_LEN);
+	return 0;
+}
+
+int case_02(void)
+{
+	unsigned char d1[MD5_DIGEST_LEN], d2[MD5_DIGEST_LEN];
+	unsigned char *buf;
+	int ret;
+	int fd;
+	size_t len = 8193;
+	ssize_t sz;
+
+	buf = malloc(len);
+	if (buf == NULL)
+		return -ENOMEM;
+	fd = open("/dev/random", O_RDONLY);
+	if (fd < 0) {
+		printf("Fail to open random file!\n");
+		ret = -EINVAL;
+		goto out;
+	}
+	memset(buf, 0, len);
+	sz = read(fd, buf, len);
+	if (sz < (ssize_t)len) {
+		printf("Too less data is read (%ld).\n", sz);
+		ret = -EINVAL;
+		goto out_rd;
+	}
+	k_md_01(buf, len, d1);
+	ssl_md5_02(buf, len, d2);
+	ret = cmp_digest(d1, d2, MD5_DIGEST_LEN);
+	if (ret < 0)
+		goto out_rd;
+	printf("Digests are matched. ");
+	dump_digest(d1, MD5_DIGEST_LEN);
+	close(fd);
+	free(buf);
+	return 0;
+out_rd:
+	close(fd);
+out:
+	free(buf);
+	return ret;
+}
+
+int main(void)
+{
+	case_01();
+	case_02();
 	return 0;
 }

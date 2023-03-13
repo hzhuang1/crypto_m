@@ -11,7 +11,6 @@ void dump_digest(uint8_t *buf, size_t len)
 {
 	size_t i;
 
-	printf("%s, len:%ld\n", __func__, len);
 	if (len == 0)
 		return;
 
@@ -20,6 +19,26 @@ void dump_digest(uint8_t *buf, size_t len)
 		printf("%02x-", buf[i]);
 	}
 	printf("%02x\n", buf[i]);
+}
+
+int cmp_digest(uint8_t *d1, uint8_t *d2, size_t len)
+{
+	int i;
+
+	if ((d1 == NULL) || (d2 == NULL) || (len == 0))
+		return -EINVAL;
+
+	for (i = 0; i < len; i++) {
+		if ((d1[i] == '\0') || (d2[i] == '\0') || (d1[i] != d2[i])) {
+			printf("Digests are not matched.\n");
+			printf("#1:");
+			dump_digest(d1, i);
+			printf("#2:");
+			dump_digest(d2, i);
+			return -EINVAL;
+		}
+	}
+	return 0;
 }
 
 #if 0
@@ -61,6 +80,11 @@ int ssl_md5_02(unsigned char *buf, size_t len, unsigned char *digest)
 	unsigned int digest_len;
 	int ret;
 
+	if (!digest) {
+		printf("%s: digest is empty.\n", __func__);
+		return -EINVAL;
+	}
+
 	md_ctx = EVP_MD_CTX_new();
 	if (md_ctx == NULL) {
 		printf("Fail to create MD_CTX.\n");
@@ -93,7 +117,6 @@ int ssl_md5_02(unsigned char *buf, size_t len, unsigned char *digest)
 		ret = -EFAULT;
 		goto out_init;
 	}
-	dump_digest(digest, digest_len);
 #ifdef SSL_ALLOC_MEM
 	OPENSSL_free(digest);
 #endif
@@ -109,12 +132,17 @@ out:
 	return ret;
 }
 
-int k_md_01(unsigned char *buf, size_t len)
+int k_md_01(unsigned char *buf, size_t len, unsigned char *digest)
 {
 	struct kcapi_handle *handle;
 	int ret, i;
 	ssize_t rc;
 	uint8_t md[MD5_DIGEST_LEN << 1];
+
+	if (!digest) {
+		printf("%s: digest is empty.\n", __func__);
+		return -EINVAL;
+	}
 
 	memset(&md, 0, MD5_DIGEST_LEN << 1);
 	ret = kcapi_md_init(&handle, "md5", 0);
@@ -130,24 +158,27 @@ int k_md_01(unsigned char *buf, size_t len)
 		return -EINVAL;
 	}
 
-	rc = kcapi_md_final(handle, (uint8_t *)&md, MD5_DIGEST_LEN);
-	printf("rc:%ld\n", rc);
-	dump_digest(md, MD5_DIGEST_LEN);
+	rc = kcapi_md_final(handle, (uint8_t *)digest, MD5_DIGEST_LEN);
+	if (rc != MD5_DIGEST_LEN) {
+		printf("rc (%ld) is wrong\n", rc);
+		kcapi_md_destroy(handle);
+		return -EINVAL;
+	}
 	kcapi_md_destroy(handle);
 	return 0;
 }
 
 int main(void)
 {
-	unsigned char *digest;
+	unsigned char d1[MD5_DIGEST_LEN], d2[MD5_DIGEST_LEN];
+	int ret;
 
-	digest = malloc(MD5_DIGEST_LEN);
-	if (digest == NULL) {
-		printf("Fail to allocate memory!\n");
-		return -ENOMEM;
-	}
-	k_md_01(TEST_STRING, strlen(TEST_STRING));
-	ssl_md5_02(TEST_STRING, strlen(TEST_STRING), digest);
-	free(digest);
+	k_md_01(TEST_STRING, strlen(TEST_STRING), d1);
+	ssl_md5_02(TEST_STRING, strlen(TEST_STRING), d2);
+	ret = cmp_digest(d1, d2, MD5_DIGEST_LEN);
+	if (ret < 0)
+		return ret;
+	printf("Digests are matched.\n");
+	dump_digest(d1, MD5_DIGEST_LEN);
 	return 0;
 }

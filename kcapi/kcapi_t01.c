@@ -11,7 +11,7 @@ void dump_digest(uint8_t *buf, size_t len)
 {
 	size_t i;
 
-	printf("%s, len:%d\n", __func__, len);
+	printf("%s, len:%ld\n", __func__, len);
 	if (len == 0)
 		return;
 
@@ -22,9 +22,9 @@ void dump_digest(uint8_t *buf, size_t len)
 	printf("%02x\n", buf[i]);
 }
 
+#if 0
 int ssl_md5_01(unsigned char *buf, size_t len)
 {
-/*
 	// OPENSSL 1.x
 	MD5_CTX *c;
 	int ret, i;
@@ -47,10 +47,17 @@ int ssl_md5_01(unsigned char *buf, size_t len)
 	}
 	dump_digest(md, MD5_DIGEST_LENGTH);
 	return 0;
-*/
+}
+#endif
+
+//#define SSL_ALLOC_MEM		1
+int ssl_md5_02(unsigned char *buf, size_t len, unsigned char *digest)
+{
 	// OPENSSL 3.0
 	EVP_MD_CTX *md_ctx;
+#ifdef SSL_ALLOC_MEM
 	unsigned char *digest;
+#endif
 	unsigned int digest_len;
 	int ret;
 
@@ -60,12 +67,14 @@ int ssl_md5_01(unsigned char *buf, size_t len)
 		ret = -ENOMEM;
 		goto out;
 	}
+#ifdef SSL_ALLOC_MEM
 	digest = OPENSSL_malloc(EVP_MD_size(EVP_md5()));
 	if (digest == NULL) {
 		printf("Fail to allocate memory.\n");
 		ret = -ENOMEM;
 		goto out_dig;
 	}
+#endif
 	ret = EVP_DigestInit_ex(md_ctx, EVP_md5(), NULL);
 	if (ret != 1) {
 		printf("Fail to init MD5.\n");
@@ -85,12 +94,16 @@ int ssl_md5_01(unsigned char *buf, size_t len)
 		goto out_init;
 	}
 	dump_digest(digest, digest_len);
+#ifdef SSL_ALLOC_MEM
 	OPENSSL_free(digest);
+#endif
 	EVP_MD_CTX_free(md_ctx);
 	return 0;
 out_init:
+#ifdef SSL_ALLOC_MEM
 	OPENSSL_free(digest);
 out_dig:
+#endif
 	EVP_MD_CTX_free(md_ctx);
 out:
 	return ret;
@@ -117,7 +130,7 @@ int k_md_01(unsigned char *buf, size_t len)
 		return -EINVAL;
 	}
 
-	rc = kcapi_md_final(handle, &md, MD5_DIGEST_LEN);
+	rc = kcapi_md_final(handle, (uint8_t *)&md, MD5_DIGEST_LEN);
 	printf("rc:%ld\n", rc);
 	dump_digest(md, MD5_DIGEST_LEN);
 	kcapi_md_destroy(handle);
@@ -126,7 +139,15 @@ int k_md_01(unsigned char *buf, size_t len)
 
 int main(void)
 {
+	unsigned char *digest;
+
+	digest = malloc(MD5_DIGEST_LEN);
+	if (digest == NULL) {
+		printf("Fail to allocate memory!\n");
+		return -ENOMEM;
+	}
 	k_md_01(TEST_STRING, strlen(TEST_STRING));
-	ssl_md5_01(TEST_STRING, strlen(TEST_STRING));
+	ssl_md5_02(TEST_STRING, strlen(TEST_STRING), digest);
+	free(digest);
 	return 0;
 }

@@ -1,0 +1,2 @@
+# Kbuild
+obj-m		:= hash_m.o

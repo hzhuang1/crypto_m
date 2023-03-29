@@ -3,8 +3,18 @@
 #include <linux/err.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/scatterlist.h>
+#include <linux/workqueue.h>
+
+#define MEASURE_COUNT	1000
+
+struct sdesc {
+	struct shash_desc shash;
+	void *buf;
+	int len;
+};
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Haojian Zhuang");
@@ -20,11 +30,7 @@ module_param(hash_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 static int buf_size = PAGE_SIZE;
 module_param(buf_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
-struct sdesc {
-	struct shash_desc shash;
-	void *buf;
-	int len;
-};
+static struct workqueue_struct *hash_workqueue;
 
 static struct sdesc *init_sdesc(struct crypto_shash *alg)
 {
@@ -60,7 +66,7 @@ static int init_data(struct sdesc *sdesc)
 	return 0;
 }
 
-static int test_hello(struct sdesc *sdesc)
+int test_hello(struct sdesc *sdesc)
 {
 	unsigned char test_buf[] = "hello";
 	int len;
@@ -73,35 +79,6 @@ static int test_hello(struct sdesc *sdesc)
 	memcpy(sdesc->buf, test_buf, len);
 	sdesc->len = len;
 	return 0;
-}
-
-static int do_shash(unsigned char *digest)
-{
-	struct crypto_shash *alg;
-	struct sdesc *sdesc;
-	int ret = 0;
-
-	alg = crypto_alloc_shash(hash_name, 0, 0);
-	if (IS_ERR(alg)) {
-		pr_info("Can't allocate SHASH %s\n", hash_name);
-		return PTR_ERR(alg);
-	}
-	sdesc = init_sdesc(alg);
-	if (IS_ERR(sdesc)) {
-		ret = PTR_ERR(sdesc);
-		goto out;
-	}
-	ret = init_data(sdesc);
-	if (ret)
-		goto out_data;
-	test_hello(sdesc);
-	ret = crypto_shash_digest(&sdesc->shash, sdesc->buf, sdesc->len, digest);
-	vfree(sdesc->buf);
-out_data:
-	kfree(sdesc);
-out:
-	crypto_free_shash(alg);
-	return ret;
 }
 
 static void dump_digest(unsigned char *digest)
@@ -117,10 +94,93 @@ static void dump_digest(unsigned char *digest)
 			digest, digest_len, 0);
 }
 
+static void measure_unit(struct sdesc *sdesc, unsigned char *digest)
+{
+	struct sdesc tmp;
+	int i;
+
+	memcpy(&tmp, sdesc, sizeof(struct sdesc));
+	for (i = 0; i < MEASURE_COUNT; i++) {
+		crypto_shash_digest(&sdesc->shash, sdesc->buf, sdesc->len, digest);
+		memcpy(sdesc, &tmp, sizeof(struct sdesc));
+	}
+}
+
+static void measure_shash(struct sdesc *sdesc, unsigned char *digest)
+{
+	ktime_t kt_start, kt_end, kt_val;
+	struct sdesc tmp;
+	int count = 0;
+	s64 delta_us;
+	s64 bytes;
+
+	memcpy(&tmp, sdesc, sizeof(struct sdesc));
+	kt_start = ktime_get();
+	kt_val = ktime_add_ms(kt_start, 3000);
+	do {
+		measure_unit(sdesc, digest);
+		kt_end = ktime_get();
+		count += MEASURE_COUNT;
+		memcpy(sdesc, &tmp, sizeof(struct sdesc));
+	} while (ktime_before(kt_end, kt_val));
+	delta_us = ktime_us_delta(kt_end, kt_start);
+	bytes = (s64)count * (s64)tmp.len;
+	pr_info("count:%d, len:%d, bytes:%lld\n", count, tmp.len, bytes);
+	//bytes = bytes / delta_us;
+	pr_info("Bandwith: %lldMB/s (%lldB, %lldus)\n", bytes / delta_us,
+		bytes, delta_us);
+	dump_digest(digest);
+}
+
+static void hash_work_func(struct work_struct *work)
+{
+	struct crypto_shash *alg;
+	struct sdesc *sdesc;
+	unsigned char digest[256] = {0};
+	int ret = 0;
+
+	alg = crypto_alloc_shash(hash_name, 0, 0);
+	if (IS_ERR(alg)) {
+		pr_info("Can't allocate SHASH %s\n", hash_name);
+		return;
+	}
+	sdesc = init_sdesc(alg);
+	if (IS_ERR(sdesc))
+		goto out;
+	ret = init_data(sdesc);
+	if (ret)
+		goto out_data;
+#if 0
+	test_hello(sdesc);
+	ret = crypto_shash_digest(&sdesc->shash, sdesc->buf, sdesc->len, digest);
+	dump_digest(digest);
+#else
+	measure_shash(sdesc, digest);
+#endif
+	vfree(sdesc->buf);
+out_data:
+	kfree(sdesc);
+out:
+	crypto_free_shash(alg);
+}
+
+static DECLARE_WORK(measure_hash_work, hash_work_func);
+
+static int do_shash(void)
+{
+	hash_workqueue = create_workqueue("hash workqueue");
+	if (!hash_workqueue) {
+		pr_info("Fail to create workqueue.\n");
+		return -ENOMEM;
+	}
+
+	queue_work(hash_workqueue, &measure_hash_work);
+	return 0;
+}
+
 static int __init hash_init(void)
 {
 	int ret;
-	unsigned char digest[256] = {0};
 
 	ret = crypto_has_alg(hash_name, 0, 0);
 	if (!ret) {
@@ -133,14 +193,15 @@ static int __init hash_init(void)
 	}
 	pr_info("HASH algorithm: %s. Data size: %d\n", hash_name, buf_size);
 
-	ret = do_shash(digest);
-	dump_digest(digest);
+	ret = do_shash();
 	return ret;
 }
 
 static void __exit hash_exit(void)
 {
 	pr_info("Exit HASH module.\n");
+	flush_workqueue(hash_workqueue);
+	destroy_workqueue(hash_workqueue);
 }
 
 module_init(hash_init);

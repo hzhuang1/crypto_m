@@ -81,15 +81,8 @@ int test_hello(struct sdesc *sdesc)
 	return 0;
 }
 
-static void dump_digest(unsigned char *digest)
+static void dump_digest(unsigned char *digest, int digest_len)
 {
-	int digest_len;
-
-	if (!strcmp(hash_name, "md5-generic") || !strcmp(hash_name, "md5")) {
-		digest_len = 16;
-	} else if (!strcmp(hash_name, "xxhash64-generic")
-		|| !strcmp(hash_name, "xxhash64")) {
-	}
 	print_hex_dump(KERN_INFO, "Hash digest: ", DUMP_PREFIX_NONE, 32, 1,
 			digest, digest_len, 0);
 }
@@ -110,7 +103,7 @@ static void measure_shash(struct sdesc *sdesc, unsigned char *digest)
 {
 	ktime_t kt_start, kt_end, kt_val;
 	struct sdesc tmp;
-	int count = 0;
+	int count = 0, digest_len;
 	s64 delta_us;
 	s64 bytes;
 
@@ -129,7 +122,8 @@ static void measure_shash(struct sdesc *sdesc, unsigned char *digest)
 	//bytes = bytes / delta_us;
 	pr_info("Bandwith: %lldMB/s (%lldB, %lldus)\n", bytes / delta_us,
 		bytes, delta_us);
-	dump_digest(digest);
+	digest_len = crypto_shash_digestsize(sdesc->shash.tfm);
+	dump_digest(digest, digest_len);
 }
 
 static void hash_work_func(struct work_struct *work)
@@ -150,13 +144,7 @@ static void hash_work_func(struct work_struct *work)
 	ret = init_data(sdesc);
 	if (ret)
 		goto out_data;
-#if 0
-	test_hello(sdesc);
-	ret = crypto_shash_digest(&sdesc->shash, sdesc->buf, sdesc->len, digest);
-	dump_digest(digest);
-#else
 	measure_shash(sdesc, digest);
-#endif
 	vfree(sdesc->buf);
 out_data:
 	kfree(sdesc);

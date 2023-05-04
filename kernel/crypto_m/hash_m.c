@@ -22,7 +22,12 @@ MODULE_DESCRIPTION("A simple module for crypto.");
 MODULE_VERSION("0.1");
 
 // The default hash algorithm is MD5.
-static char *hash_name = "md5-generic";
+//static char *hash_name = "md5-generic";
+//static char *hash_name = "sha1-generic";
+//static char *hash_name = "sha512-generic";
+//static char *hash_name = "sha256-generic";
+static char *hash_name = "chacha20-generic";
+//static char *hash_name = "md4-generic";
 // charp means char pointer
 module_param(hash_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 //MODULE_PARAM_DESC(hash_name, "Run the hash algorithm.");

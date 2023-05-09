@@ -13,11 +13,32 @@
 
 struct sdesc {
 	struct shash_desc shash;
+	u8 reserve[128];
 	void *buf;
-	int len;
+	int len;	// buffer length
+	void *digest;
+	int digest_len;
+	struct crypto_shash *tfm;
 };
 
 struct skcipher_desc {
+	void *buf;
+	int len;	// buffer length;
+	struct crypto_skcipher *tfm;
+	struct skcipher_request *req;
+};
+
+enum {
+	ALG_SHASH = 0,
+	ALG_SKCIPHER,
+};
+
+struct generic_desc {
+	union {
+		struct sdesc		s;
+		struct skcipher_desc	sk;
+	};
+	int alg_type;
 };
 
 MODULE_LICENSE("GPL");
@@ -30,8 +51,8 @@ MODULE_VERSION("0.1");
 //static char *hash_name = "sha1-generic";
 //static char *hash_name = "sha512-generic";
 //static char *hash_name = "sha256-generic";
-static char *hash_name = "chacha20-generic";
-//static char *hash_name = "md4-generic";
+//static char *hash_name = "chacha20-generic";
+static char *hash_name = "md4-generic";
 // charp means char pointer
 module_param(hash_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 //MODULE_PARAM_DESC(hash_name, "Run the hash algorithm.");
@@ -43,6 +64,8 @@ static int buf_size = PAGE_SIZE;
 module_param(buf_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
 static struct workqueue_struct *hash_workqueue;
+
+static void *buf = NULL;
 
 static struct sdesc *init_sdesc(struct crypto_shash *alg)
 {
@@ -99,6 +122,30 @@ static void dump_digest(unsigned char *digest, int digest_len)
 			digest, digest_len, 0);
 }
 
+static int is_skcipher_alg(char *alg_name)
+{
+	if (!strcmp(alg_name, "xts(aes)"))
+		return 1;
+	return 0;
+}
+
+static int is_hash_alg(char *alg_name)
+{
+	if (!strcmp(alg_name, "md4-generic"))
+		return 1;
+	if (!strcmp(alg_name, "md5-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha1-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha256-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha512-generic"))
+		return 1;
+	if (!strcmp(alg_name, "chacha20-generic"))
+		return 1;
+	return 0;
+}
+
 static void measure_unit(struct sdesc *sdesc, unsigned char *digest)
 {
 	struct sdesc tmp;
@@ -138,6 +185,152 @@ static void measure_shash(struct sdesc *sdesc, unsigned char *digest)
 	dump_digest(digest, digest_len);
 }
 
+static int shash_init(struct generic_desc *desc)
+{
+	desc->s.digest_len = crypto_shash_digestsize(desc->s.tfm);
+	/*
+	desc->s.digest = vzalloc(desc->s.digest_len);
+	if (desc->s.digest == NULL) {
+		pr_err("Fail to allocate digest memory\n");
+		return -ENOMEM;
+	}
+	*/
+	return 0;
+}
+
+static int skcipher_init(struct generic_desc *desc)
+{
+	struct crypto_skcipher *tfm = desc->sk.tfm;
+	struct skcipher_request *req = desc->sk.req;
+	struct scatterlist sg;
+	DECLARE_CRYPTO_WAIT(wait);
+	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
+	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
+	int ret = -EINVAL;
+
+	get_random_bytes(key, sizeof(key));
+	ret = crypto_skcipher_setkey(tfm, key, sizeof(key));
+	if (ret) {
+		pr_err("Error on setting key: %d\n", ret);
+		goto out;
+	}
+
+	/* Allocate a request object */
+	req = skcipher_request_alloc(tfm, GFP_KERNEL);
+	if (!req) {
+		pr_err("Fail to request SKCIPHER object\n");
+		goto out;
+	}
+
+	/* Initialize the IV */
+	get_random_bytes(iv, sizeof(iv));
+
+	sg_init_one(&sg, desc->sk.buf, desc->sk.len);
+	skcipher_request_set_callback(req,
+				      CRYPTO_TFM_REQ_MAY_BACKLOG |
+				      CRYPTO_TFM_REQ_MAY_SLEEP,
+				      crypto_req_done,
+				      &wait);
+	skcipher_request_set_crypt(req, &sg, &sg, buf_size, iv);
+out:
+	return ret;
+}
+
+static int run_shash(struct generic_desc *desc)
+{
+	struct crypto_shash *tfm = desc->s.tfm;
+	struct generic_desc tmp;
+	int i, ret;
+
+	tfm = crypto_alloc_shash(alg_name, 0, 0);
+	if (IS_ERR(tfm)) {
+		pr_err("Can't allocate SHASH %s (%ld)\n",
+			alg_name, PTR_ERR(tfm));
+		return PTR_ERR(tfm);
+	}
+	desc->s.digest_len = crypto_shash_digestsize(tfm);
+	memcpy(&tmp, desc, sizeof(struct generic_desc));
+	pr_info("buf:%p, len:%d, digest:%p\n", desc->s.buf, desc->s.len, desc->s.digest);
+	for (i = 0; i < MEASURE_COUNT; i++) {
+		crypto_shash_digest(&desc->s.shash, desc->s.buf, desc->s.len, desc->s.digest);
+		memcpy(desc, &tmp, sizeof(struct generic_desc));
+	}
+	crypto_free_shash(tfm);
+	return 0;
+out:
+	crypto_free_shash(tfm);
+	return ret;
+}
+
+static int run_skcipher(struct generic_desc *desc)
+{
+	/*
+	struct crypto_skcipher *tfm = NULL;
+	struct skcipher_request *req = NULL;
+	DECLARE_CRYPTO_WAIT(wait);
+	*/
+	/*
+	ret = crypto_skcipher_encrypt(req);
+	ret = crypto_wait_req(ret, &wait);
+	if (ret) {
+		pr_err("Error encrypt data: %d\n", ret);
+		goto out;
+	}
+	*/
+	/*
+out_wait:
+	kfree(data);
+out_data:
+	skcipher_request_free(req);
+out:
+	crypto_free_skcipher(tfm);
+	*/
+	return 0;
+}
+
+static int run_algm(struct generic_desc *desc)
+{
+	int ret = -EINVAL;
+
+	if (desc->alg_type == ALG_SHASH)
+		ret = run_shash(desc);
+	else if (desc->alg_type == ALG_SKCIPHER)
+		ret = run_skcipher(desc);
+	return ret;
+}
+
+static void measure_algm(struct generic_desc *desc)
+{
+	ktime_t kt_start, kt_end, kt_val;
+	struct generic_desc tmp;
+	int count = 0;
+	s64 delta_us;
+	s64 bytes;
+	int ret;
+
+	memcpy(&tmp, desc, sizeof(struct generic_desc));
+	kt_start = ktime_get();
+	kt_val = ktime_add_ms(kt_start, 3000);
+	do {
+		ret = run_algm(desc);
+		if (ret)
+			break;
+		kt_end = ktime_get();
+		count += MEASURE_COUNT;
+		memcpy(desc, &tmp, sizeof(struct generic_desc));
+	} while (ktime_before(kt_end, kt_val));
+	delta_us = ktime_us_delta(kt_end, kt_start);
+	bytes = (s64)count * (s64)buf_size;
+	if (ret) {
+		pr_info("Error on running algorithm: %d\n", ret);
+	} else {
+		pr_info("count:%d, len:%d, bytes:%lld\n",
+			count, buf_size, bytes);
+		pr_info("Bandwith: %lldMB/s (%lldB, %lldus)\n",
+			bytes / delta_us, bytes, delta_us);
+	}
+}
+
 static void hash_work_func(struct work_struct *work)
 {
 	struct crypto_shash *alg;
@@ -164,6 +357,116 @@ out:
 	crypto_free_shash(alg);
 }
 
+static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
+{
+	struct generic_desc *desc = NULL;
+	void *data = NULL;
+	int ret;
+
+	data = vzalloc(buf_size);
+	if (data == NULL) {
+		pr_err("Fail to allocate data memory\n");
+		return NULL;
+	}
+	*(u8 *)data = 0x3;
+
+	desc = vzalloc(sizeof(struct generic_desc));
+	if (desc == NULL)
+		goto out;
+
+	if (alg_type == ALG_SHASH) {
+		desc->s.buf = data;
+		desc->s.len = buf_size;
+		// reserve large memory block
+		desc->s.digest = vzalloc(512);
+		if (desc->s.digest == NULL) {
+			vfree(desc);
+			goto out;
+		}
+		//ret = shash_init(desc);
+	} else if (alg_type == ALG_SKCIPHER) {
+		get_random_bytes(data, buf_size);
+		desc->sk.buf = data;
+		desc->sk.len = buf_size;
+		//ret = skcipher_init(desc);
+	}
+	/*
+	if (ret)
+		goto out_init;
+	*/
+	desc->alg_type = alg_type;
+	return desc;
+
+/*
+out_init:
+	if (alg_type == ALG_SHASH)
+		crypto_free_shash(desc->s.tfm);
+	else if (alg_type == ALG_SKCIPHER)
+		crypto_free_skcipher(desc->sk.tfm);
+out_alloc:
+	vfree(desc);
+*/
+out:
+	vfree(data);
+	return NULL;
+}
+
+static void free_generic_desc(struct generic_desc *desc)
+{
+	if (desc->alg_type == ALG_SHASH) {
+		crypto_free_shash(desc->s.tfm);
+		vfree(desc->s.buf);
+	} else if (desc->alg_type == ALG_SKCIPHER) {
+		crypto_free_skcipher(desc->sk.tfm);
+		vfree(desc->sk.buf);
+	}
+	vfree(desc);
+}
+
+#if 0
+static int init_generic_desc(struct generic_desc *desc)
+{
+#if 0
+	struct sdesc *sdesc;
+	int size;
+
+	size = sizeof(struct shash_desc) + crypto_shash_descsize(alg);
+	sdesc = kmalloc(size, GFP_KERNEL);
+	if (!sdesc) {
+		pr_info("Fail to allocate SHASH desc.\n");
+		return ERR_PTR(-ENOMEM);
+	}
+	sdesc->shash.tfm = alg;
+	return sdesc;
+#endif
+	void *data = NULL;
+	int ret = 0;
+	
+	data = vzalloc(buf_size);
+	if (!data) {
+		pr_err("Fail to allocate memory\n");
+		return -ENOMEM;
+	}
+
+	if (desc->alg_type == ALG_SHASH) {
+		desc->s.buf = data;
+		desc->s.len = buf_size;
+		ret = shash_init(desc);
+	} else if (desc->alg_type == ALG_SKCIPHER) {
+		get_random_bytes(data, buf_size);
+		desc->sk.buf = data;
+		desc->sk.len = buf_size;
+		ret = skcipher_init(desc);
+	}
+	if (ret) {
+		vfree(data);
+		return ret;
+	}
+	return 0;
+}
+#endif
+
+#if 0
 static void *init_skcipher_data(void)
 {
 	u8 *data = NULL;
@@ -177,63 +480,64 @@ static void *init_skcipher_data(void)
 	get_random_bytes(data, buf_size);
 	return data;
 }
+#endif
+
+#if 0
+static void measure(struct generic_desc *desc)
+{
+	ktime_t kt_start, kt_end, kt_val;
+	struct generic_desc tmp;
+	int count = 0;
+	s64 delta_us;
+	s64 bytes;
+
+	memcpy(&tmp, desc, sizeof(struct generic_desc));
+	kt_start = ktime_get();
+	kt_val = ktime_add_ms(kt_start, 3000);
+	do {
+		_measure(desc);
+		kt_end = ktime_get();
+		count += MEASURE_COUNT;
+		memcpy(desc, &tmp, sizeof(struct generic_desc));
+	} while (ktime_before(kt_end, kt_val));
+	bytes = (s64)count * (s64)tmp.len;
+	pr_info("count:%d, len:%d, bytes:%lld\n", count, tmp.len, bytes);
+	//bytes = bytes / delta_us;
+	pr_info("Bandwith: %lldMB/s (%lldB, %lldus)\n", bytes / delta_us,
+		bytes, delta_us);
+	if (desc->alg_type == ALG_SHASH) {
+		int digest_len;
+
+		digest_len = crypto_shash_digestsize(desc->s.shash.tfm);
+		dump_digest(desc->s.digest, desc->s.digest_len);
+	}
+}
+#endif
 
 static void skcipher_work_func(struct work_struct *work)
 {
-	struct crypto_skcipher *tfm = NULL;
-	struct skcipher_request *req = NULL;
-	struct scatterlist sg;
-	DECLARE_CRYPTO_WAIT(wait);
-	void *data;
-	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
-	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
-	int ret;
+	int ret, alg_type;
 
-	tfm = crypto_alloc_skcipher(alg_name, 0, 0);
-	if (IS_ERR(tfm)) {
-		pr_err("Can't allocate SKCIPHER %s\n", alg_name);
+	struct generic_desc *desc = NULL;
+
+	if (is_hash_alg(alg_name))
+		alg_type = ALG_SHASH;
+	else if (is_skcipher_alg(alg_name))
+		alg_type = ALG_SKCIPHER;
+
+	desc = alloc_generic_desc(alg_type, alg_name);
+	if (desc == NULL)
 		return;
-	}
-	get_random_bytes(key, sizeof(key));
-	ret = crypto_skcipher_setkey(tfm, key, sizeof(key));
-	if (ret) {
-		pr_err("Error on setting key: %d\n", ret);
+#if 0
+	ret = init_generic_desc(desc);
+	if (ret)
 		goto out;
-	}
+#endif
 
-	/* Allocate a request object */
-	req = skcipher_request_alloc(tfm, GFP_KERNEL);
-	if (!req) {
-		pr_err("Fail to request SKCIPHER object\n");
-		goto out;
-	}
 
-	/* Initialize the IV */
-	get_random_bytes(iv, sizeof(iv));
-
-	data = init_skcipher_data();
-	if (!data)
-		goto out_data;
-
-	sg_init_one(&sg, data, buf_size);
-	skcipher_request_set_callback(req,
-				      CRYPTO_TFM_REQ_MAY_BACKLOG |
-				      CRYPTO_TFM_REQ_MAY_SLEEP,
-				      crypto_req_done,
-				      &wait);
-	skcipher_request_set_crypt(req, &sg, &sg, buf_size, iv);
-	ret = crypto_skcipher_encrypt(req);
-	ret = crypto_wait_req(ret, &wait);
-	if (ret) {
-		pr_err("Error encrypt data: %d\n", ret);
-		goto out_wait;
-	}
-out_wait:
-	kfree(data);
-out_data:
-	skcipher_request_free(req);
+	measure_algm(desc);
 out:
-	crypto_free_skcipher(tfm);
+	free_generic_desc(desc);
 }
 
 static DECLARE_WORK(measure_hash_work, hash_work_func);
@@ -263,30 +567,6 @@ static int do_skcipher(void)
 	return 0;
 }
 
-static int is_skcipher_alg(char *alg_name)
-{
-	if (!strcmp(alg_name, "xts(aes)"))
-		return 1;
-	return 0;
-}
-
-static int is_hash_alg(char *alg_name)
-{
-	if (!strcmp(alg_name, "md4-generic"))
-		return 1;
-	if (!strcmp(alg_name, "md5-generic"))
-		return 1;
-	if (!strcmp(alg_name, "sha1-generic"))
-		return 1;
-	if (!strcmp(alg_name, "sha256-generic"))
-		return 1;
-	if (!strcmp(alg_name, "sha512-generic"))
-		return 1;
-	if (!strcmp(alg_name, "chacha20-generic"))
-		return 1;
-	return 0;
-}
-
 static int __init hash_init(void)
 {
 	int ret;
@@ -300,6 +580,7 @@ static int __init hash_init(void)
 		pr_warn("Invalid buffer size (%d).\n", buf_size);
 		return -EINVAL;
 	}
+#if 1
 	if (is_hash_alg(alg_name)) {
 		pr_info("HASH algorithm: %s. Data size: %d\n",
 			alg_name, buf_size);
@@ -310,6 +591,9 @@ static int __init hash_init(void)
 			alg_name, buf_size);
 		ret = do_skcipher();
 	}
+#else
+	ret = do_skcipher();
+#endif
 	return ret;
 }
 

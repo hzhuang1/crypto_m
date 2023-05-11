@@ -20,8 +20,6 @@ struct sdesc {
 };
 
 struct skcipher_desc {
-	void *buf;
-	int len;	// buffer length;
 	struct crypto_skcipher *tfm;
 	struct skcipher_request *req;
 };
@@ -99,44 +97,6 @@ static int is_hash_alg(char *alg_name)
 	return 0;
 }
 
-static int skcipher_init(struct generic_desc *desc)
-{
-	struct crypto_skcipher *tfm = desc->sk.tfm;
-	struct skcipher_request *req = desc->sk.req;
-	struct scatterlist sg;
-	DECLARE_CRYPTO_WAIT(wait);
-	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
-	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
-	int ret = -EINVAL;
-
-	get_random_bytes(key, sizeof(key));
-	ret = crypto_skcipher_setkey(tfm, key, sizeof(key));
-	if (ret) {
-		pr_err("Error on setting key: %d\n", ret);
-		goto out;
-	}
-
-	/* Allocate a request object */
-	req = skcipher_request_alloc(tfm, GFP_KERNEL);
-	if (!req) {
-		pr_err("Fail to request SKCIPHER object\n");
-		goto out;
-	}
-
-	/* Initialize the IV */
-	get_random_bytes(iv, sizeof(iv));
-
-	sg_init_one(&sg, desc->sk.buf, desc->sk.len);
-	skcipher_request_set_callback(req,
-				      CRYPTO_TFM_REQ_MAY_BACKLOG |
-				      CRYPTO_TFM_REQ_MAY_SLEEP,
-				      crypto_req_done,
-				      &wait);
-	skcipher_request_set_crypt(req, &sg, &sg, buf_size, iv);
-out:
-	return ret;
-}
-
 static int run_shash(struct generic_desc *desc)
 {
 	struct crypto_shash *tfm = NULL;
@@ -169,28 +129,58 @@ static int run_shash(struct generic_desc *desc)
 
 static int run_skcipher(struct generic_desc *desc)
 {
-	/*
 	struct crypto_skcipher *tfm = NULL;
 	struct skcipher_request *req = NULL;
+	struct scatterlist sg;
 	DECLARE_CRYPTO_WAIT(wait);
-	*/
-	/*
+	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
+	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
+	int ret = -EINVAL;
+
+	tfm = crypto_alloc_skcipher(alg_name, 0, 0);
+	if (IS_ERR(tfm)) {
+		pr_err("Can't allocate SKCIPHER %s (%ld)\n",
+			alg_name, PTR_ERR(tfm));
+		return PTR_ERR(tfm);
+	}
+	get_random_bytes(key, sizeof(key));
+	ret = crypto_skcipher_setkey(tfm, key, sizeof(key));
+	if (ret) {
+		pr_err("Error on setting key: %d\n", ret);
+		goto out;
+	}
+
+	/* Allocate a request object */
+	req = skcipher_request_alloc(tfm, GFP_KERNEL);
+	if (!req) {
+		pr_err("Fail to request SKCIPHER object\n");
+		goto out;
+	}
+
+	/* Initialize the IV */
+	get_random_bytes(iv, sizeof(iv));
+
+	sg_init_one(&sg, desc->buf, desc->len);
+	skcipher_request_set_callback(req,
+				      CRYPTO_TFM_REQ_MAY_BACKLOG |
+				      CRYPTO_TFM_REQ_MAY_SLEEP,
+				      crypto_req_done,
+				      &wait);
+	skcipher_request_set_crypt(req, &sg, &sg, desc->len, iv);
 	ret = crypto_skcipher_encrypt(req);
 	ret = crypto_wait_req(ret, &wait);
 	if (ret) {
 		pr_err("Error encrypt data: %d\n", ret);
-		goto out;
+		goto out_wait;
 	}
-	*/
-	/*
+	skcipher_request_free(req);
+	crypto_free_skcipher(tfm);
+	return 0;
 out_wait:
-	kfree(data);
-out_data:
 	skcipher_request_free(req);
 out:
 	crypto_free_skcipher(tfm);
-	*/
-	return 0;
+	return ret;
 }
 
 static int run_algm(struct generic_desc *desc)
@@ -239,7 +229,7 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 	void *data = NULL;
 	int ret;
 
-	data = vzalloc(buf_size + 63);
+	data = kzalloc(buf_size + 63, GFP_KERNEL);
 	if (data == NULL) {
 		pr_err("Fail to allocate data memory\n");
 		return NULL;
@@ -273,7 +263,7 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 	return desc;
 
 out:
-	vfree(data);
+	kfree(data);
 	return NULL;
 }
 
@@ -284,7 +274,7 @@ static void free_generic_desc(struct generic_desc *desc)
 		vfree(desc->digest);
 	} else if (desc->alg_type == ALG_SKCIPHER) {
 	}
-	vfree(desc->buf);
+	kfree(desc->buf);
 	vfree(desc);
 }
 
@@ -324,7 +314,6 @@ static void skcipher_work_func(struct work_struct *work)
 		return;
 
 	measure_algm(desc);
-out:
 	free_generic_desc(desc);
 }
 

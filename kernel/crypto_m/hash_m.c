@@ -9,7 +9,6 @@
 #include <linux/scatterlist.h>
 #include <linux/workqueue.h>
 
-#define MEASURE_COUNT	1000
 
 struct sdesc {
 	struct shash_desc *shash;
@@ -118,11 +117,7 @@ static int run_shash(struct generic_desc *desc)
 		alignmask = 15;
 	align_buf = (void *)ALIGN((unsigned long)desc->buf, alignmask);
 	align_digest = (void *)((unsigned long)desc->digest & ~alignmask);
-	memcpy(&tmp, &desc->s, sizeof(struct sdesc));
-	for (i = 0; i < MEASURE_COUNT; i++) {
-		crypto_shash_digest(desc->s.shash, align_buf, desc->len, align_digest);
-		memcpy(&desc->s, &tmp, sizeof(struct sdesc));
-	}
+	crypto_shash_digest(desc->s.shash, align_buf, desc->len, align_digest);
 	crypto_free_shash(tfm);
 	return 0;
 }
@@ -209,7 +204,7 @@ static void measure_algm(struct generic_desc *desc)
 		if (ret)
 			break;
 		kt_end = ktime_get();
-		count += MEASURE_COUNT;
+		count++;
 	} while (ktime_before(kt_end, kt_val));
 	delta_us = ktime_us_delta(kt_end, kt_start);
 	bytes = (s64)count * (s64)buf_size;
@@ -229,7 +224,7 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 	void *data = NULL;
 	int ret;
 
-	data = kzalloc(buf_size + 63, GFP_KERNEL);
+	data = kzalloc(buf_size, GFP_KERNEL);
 	if (data == NULL) {
 		pr_err("Fail to allocate data memory\n");
 		return NULL;

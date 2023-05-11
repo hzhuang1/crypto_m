@@ -21,6 +21,7 @@ struct sdesc {
 struct skcipher_desc {
 	struct crypto_skcipher *tfm;
 	struct skcipher_request *req;
+	int keysize;
 };
 
 enum {
@@ -75,6 +76,10 @@ static void dump_digest(unsigned char *digest, int digest_len)
 static int is_skcipher_alg(char *alg_name)
 {
 	if (!strcmp(alg_name, "xts(aes)"))
+		return 1;
+	if (!strcmp(alg_name, "cbc(aes)"))
+		return 1;
+	if (!strcmp(alg_name, "ecb(aes)"))
 		return 1;
 	return 0;
 }
@@ -139,7 +144,7 @@ static int run_skcipher(struct generic_desc *desc)
 		return PTR_ERR(tfm);
 	}
 	get_random_bytes(key, sizeof(key));
-	ret = crypto_skcipher_setkey(tfm, key, sizeof(key));
+	ret = crypto_skcipher_setkey(tfm, key, desc->sk.keysize);
 	if (ret) {
 		pr_err("Error on setting key: %d\n", ret);
 		goto out;
@@ -252,6 +257,14 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 		}
 	} else if (alg_type == ALG_SKCIPHER) {
 		get_random_bytes(data, buf_size);
+		if (!strcmp(alg_name, "xts(aes)"))
+			desc->sk.keysize = 64;
+		else if (!strcmp(alg_name, "cbc(aes)"))
+			desc->sk.keysize = 32;
+		else if (!strcmp(alg_name, "ecb(aes)"))
+			desc->sk.keysize = 32;
+		else
+			desc->sk.keysize = 32;
 	} else
 		goto out;
 	desc->alg_type = alg_type;

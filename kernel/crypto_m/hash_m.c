@@ -69,57 +69,6 @@ static struct workqueue_struct *hash_workqueue;
 
 static void *buf = NULL;
 
-#if 0
-static struct sdesc *init_sdesc(struct crypto_shash *alg)
-{
-	struct sdesc *sdesc;
-	int size;
-
-	size = sizeof(struct shash_desc) + crypto_shash_descsize(alg);
-	sdesc = kmalloc(size, GFP_KERNEL);
-	if (!sdesc) {
-		pr_info("Fail to allocate SHASH desc.\n");
-		return ERR_PTR(-ENOMEM);
-	}
-	sdesc->shash.tfm = alg;
-	return sdesc;
-}
-
-static int init_shash_data(struct sdesc *sdesc)
-{
-	int i;
-	unsigned char tmp;
-
-	if (!sdesc)
-		return -EINVAL;
-	sdesc->len = buf_size;
-	sdesc->buf = kmalloc(buf_size, GFP_KERNEL);
-	if (!sdesc->buf) {
-		pr_warn("Fail to allocate buffer.\n");
-		return PTR_ERR(sdesc->buf);
-	}
-	for (i = 0; i < (buf_size + PAGE_SIZE - 1) >> PAGE_SHIFT; i++) {
-		tmp = *((unsigned char *)sdesc->buf + (i << PAGE_SHIFT));
-	}
-	return 0;
-}
-
-int test_hello(struct sdesc *sdesc)
-{
-	unsigned char test_buf[] = "hello";
-	int len;
-
-	if (!sdesc)
-		return -EINVAL;
-	len = strlen(test_buf);
-	if (len == 0)
-		return -EINVAL;
-	memcpy(sdesc->buf, test_buf, len);
-	sdesc->len = len;
-	return 0;
-}
-#endif
-
 static void dump_digest(unsigned char *digest, int digest_len)
 {
 	print_hex_dump(KERN_INFO, "Hash digest: ", DUMP_PREFIX_NONE, 32, 1,
@@ -149,60 +98,6 @@ static int is_hash_alg(char *alg_name)
 		return 1;
 	return 0;
 }
-
-#if 0
-static void measure_unit(struct sdesc *sdesc, unsigned char *digest)
-{
-	struct sdesc tmp;
-	int i;
-
-	memcpy(&tmp, sdesc, sizeof(struct sdesc));
-	for (i = 0; i < MEASURE_COUNT; i++) {
-		crypto_shash_digest(&sdesc->shash, sdesc->buf, sdesc->len, digest);
-		memcpy(sdesc, &tmp, sizeof(struct sdesc));
-	}
-}
-
-static void measure_shash(struct sdesc *sdesc, unsigned char *digest)
-{
-	ktime_t kt_start, kt_end, kt_val;
-	struct sdesc tmp;
-	int count = 0, digest_len;
-	s64 delta_us;
-	s64 bytes;
-
-	memcpy(&tmp, sdesc, sizeof(struct sdesc));
-	kt_start = ktime_get();
-	kt_val = ktime_add_ms(kt_start, 3000);
-	do {
-		measure_unit(sdesc, digest);
-		kt_end = ktime_get();
-		count += MEASURE_COUNT;
-		memcpy(sdesc, &tmp, sizeof(struct sdesc));
-	} while (ktime_before(kt_end, kt_val));
-	delta_us = ktime_us_delta(kt_end, kt_start);
-	bytes = (s64)count * (s64)tmp.len;
-	pr_info("count:%d, len:%d, bytes:%lld\n", count, tmp.len, bytes);
-	//bytes = bytes / delta_us;
-	pr_info("Bandwith: %lldMB/s (%lldB, %lldus)\n", bytes / delta_us,
-		bytes, delta_us);
-	digest_len = crypto_shash_digestsize(sdesc->shash.tfm);
-	dump_digest(digest, digest_len);
-}
-
-static int shash_init(struct generic_desc *desc)
-{
-	desc->digest_len = crypto_shash_digestsize(desc->s->tfm);
-	/*
-	desc->s.digest = vzalloc(desc->s.digest_len);
-	if (desc->s.digest == NULL) {
-		pr_err("Fail to allocate digest memory\n");
-		return -ENOMEM;
-	}
-	*/
-	return 0;
-}
-#endif
 
 static int skcipher_init(struct generic_desc *desc)
 {
@@ -312,13 +207,11 @@ static int run_algm(struct generic_desc *desc)
 static void measure_algm(struct generic_desc *desc)
 {
 	ktime_t kt_start, kt_end, kt_val;
-	//struct generic_desc tmp;
 	int count = 0;
 	s64 delta_us;
 	s64 bytes;
 	int ret;
 
-	//memcpy(&tmp, desc, sizeof(struct generic_desc));
 	kt_start = ktime_get();
 	kt_val = ktime_add_ms(kt_start, 3000);
 	do {
@@ -327,7 +220,6 @@ static void measure_algm(struct generic_desc *desc)
 			break;
 		kt_end = ktime_get();
 		count += MEASURE_COUNT;
-		//memcpy(desc, &tmp, sizeof(struct generic_desc));
 	} while (ktime_before(kt_end, kt_val));
 	delta_us = ktime_us_delta(kt_end, kt_start);
 	bytes = (s64)count * (s64)buf_size;
@@ -340,34 +232,6 @@ static void measure_algm(struct generic_desc *desc)
 			bytes / delta_us, bytes, delta_us);
 	}
 }
-
-#if 0
-static void hash_work_func(struct work_struct *work)
-{
-	struct crypto_shash *alg;
-	struct sdesc *sdesc;
-	unsigned char digest[256] = {0};
-	int ret = 0;
-
-	alg = crypto_alloc_shash(hash_name, 0, 0);
-	if (IS_ERR(alg)) {
-		pr_info("Can't allocate SHASH %s\n", hash_name);
-		return;
-	}
-	sdesc = init_sdesc(alg);
-	if (IS_ERR(sdesc))
-		goto out;
-	ret = init_shash_data(sdesc);
-	if (ret)
-		goto out_data;
-	measure_shash(sdesc, digest);
-	vfree(sdesc->buf);
-out_data:
-	kfree(sdesc);
-out:
-	crypto_free_shash(alg);
-}
-#endif
 
 static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 {
@@ -425,49 +289,6 @@ static void free_generic_desc(struct generic_desc *desc)
 }
 
 #if 0
-static int init_generic_desc(struct generic_desc *desc)
-{
-#if 0
-	struct sdesc *sdesc;
-	int size;
-
-	size = sizeof(struct shash_desc) + crypto_shash_descsize(alg);
-	sdesc = kmalloc(size, GFP_KERNEL);
-	if (!sdesc) {
-		pr_info("Fail to allocate SHASH desc.\n");
-		return ERR_PTR(-ENOMEM);
-	}
-	sdesc->shash.tfm = alg;
-	return sdesc;
-#endif
-	void *data = NULL;
-	int ret = 0;
-	
-	data = vzalloc(buf_size);
-	if (!data) {
-		pr_err("Fail to allocate memory\n");
-		return -ENOMEM;
-	}
-
-	if (desc->alg_type == ALG_SHASH) {
-		desc->s.buf = data;
-		desc->s.len = buf_size;
-		ret = shash_init(desc);
-	} else if (desc->alg_type == ALG_SKCIPHER) {
-		get_random_bytes(data, buf_size);
-		desc->sk.buf = data;
-		desc->sk.len = buf_size;
-		ret = skcipher_init(desc);
-	}
-	if (ret) {
-		vfree(data);
-		return ret;
-	}
-	return 0;
-}
-#endif
-
-#if 0
 static void *init_skcipher_data(void)
 {
 	u8 *data = NULL;
@@ -480,38 +301,6 @@ static void *init_skcipher_data(void)
 	}
 	get_random_bytes(data, buf_size);
 	return data;
-}
-#endif
-
-#if 0
-static void measure(struct generic_desc *desc)
-{
-	ktime_t kt_start, kt_end, kt_val;
-	struct generic_desc tmp;
-	int count = 0;
-	s64 delta_us;
-	s64 bytes;
-
-	memcpy(&tmp, desc, sizeof(struct generic_desc));
-	kt_start = ktime_get();
-	kt_val = ktime_add_ms(kt_start, 3000);
-	do {
-		_measure(desc);
-		kt_end = ktime_get();
-		count += MEASURE_COUNT;
-		memcpy(desc, &tmp, sizeof(struct generic_desc));
-	} while (ktime_before(kt_end, kt_val));
-	bytes = (s64)count * (s64)tmp.len;
-	pr_info("count:%d, len:%d, bytes:%lld\n", count, tmp.len, bytes);
-	//bytes = bytes / delta_us;
-	pr_info("Bandwith: %lldMB/s (%lldB, %lldus)\n", bytes / delta_us,
-		bytes, delta_us);
-	if (desc->alg_type == ALG_SHASH) {
-		int digest_len;
-
-		digest_len = crypto_shash_digestsize(desc->s.shash.tfm);
-		dump_digest(desc->s.digest, desc->s.digest_len);
-	}
 }
 #endif
 
@@ -533,34 +322,13 @@ static void skcipher_work_func(struct work_struct *work)
 	desc = alloc_generic_desc(alg_type, alg_name);
 	if (desc == NULL)
 		return;
-#if 0
-	ret = init_generic_desc(desc);
-	if (ret)
-		goto out;
-#endif
-
 
 	measure_algm(desc);
 out:
 	free_generic_desc(desc);
 }
 
-//static DECLARE_WORK(measure_hash_work, hash_work_func);
 static DECLARE_WORK(measure_skcipher_work, skcipher_work_func);
-
-#if 0
-static int do_shash(void)
-{
-	hash_workqueue = create_workqueue("hash workqueue");
-	if (!hash_workqueue) {
-		pr_info("Fail to create workqueue.\n");
-		return -ENOMEM;
-	}
-
-	queue_work(hash_workqueue, &measure_hash_work);
-	return 0;
-}
-#endif
 
 static int do_skcipher(void)
 {
@@ -587,20 +355,7 @@ static int __init hash_init(void)
 		pr_warn("Invalid buffer size (%d).\n", buf_size);
 		return -EINVAL;
 	}
-#if 0
-	if (is_hash_alg(alg_name)) {
-		pr_info("HASH algorithm: %s. Data size: %d\n",
-			alg_name, buf_size);
-
-		ret = do_shash();
-	} else if (is_skcipher_alg(alg_name)) {
-		pr_info("SKCIPHER algorithm: %s. Data size: %d\n",
-			alg_name, buf_size);
-		ret = do_skcipher();
-	}
-#else
 	ret = do_skcipher();
-#endif
 	return ret;
 }
 

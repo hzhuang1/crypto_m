@@ -78,8 +78,6 @@ module_param(mode_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
 static struct workqueue_struct *hash_workqueue;
 
-static void *buf = NULL;
-
 static void dump_digest(unsigned char *digest, int digest_len)
 {
 	print_hex_dump(KERN_INFO, "Hash digest: ", DUMP_PREFIX_NONE, 32, 1,
@@ -117,8 +115,6 @@ static int is_hash_alg(char *alg_name)
 static int run_shash(struct generic_desc *desc)
 {
 	struct crypto_shash *tfm = NULL;
-	struct sdesc tmp;
-	int i, ret, size;
 	unsigned long alignmask;
 	void *align_buf, *align_digest;
 
@@ -152,6 +148,8 @@ static int run_skcipher(struct generic_desc *desc)
 
 	if (key_bits == 128)
 		desc->sk.keysize = 16;
+	else if (key_bits == 192)
+		desc->sk.keysize = 24;
 	else if (key_bits == 256)
 		desc->sk.keysize = 32;
 	else {
@@ -253,6 +251,14 @@ static int init_skcipher(struct generic_desc *desc,
 	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
 	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
 	u8 aes_128_cbc_ptext[] = "Single block msg";
+	u8 aes_192_cbc_ptext[] = "\x6b\xc1\xbe\xe2\x2e\x40\x9f\x96"
+				"\xe9\x3d\x7e\x11\x73\x93\x17\x2a"
+				"\xae\x2d\x8a\x57\x1e\x03\xac\x9c"
+				"\x9e\xb7\x6f\xac\x45\xaf\x8e\x51"
+				"\x30\xc8\x1c\x46\xa3\x5c\xe4\x11"
+				"\xe5\xfb\xc1\x19\x1a\x0a\x52\xef"
+				"\xf6\x9f\x24\x45\xdf\x4f\x9b\x17"
+				"\xad\x2b\x41\x7b\xe6\x6c\x37\x10";
 	u8 aes_256_cbc_ptext[] = "\x6b\xc1\xbe\xe2\x2e\x40\x9f\x96"
 				"\xe9\x3d\x7e\x11\x73\x93\x17\x2a"
 				"\xae\x2d\x8a\x57\x1e\x03\xac\x9c"
@@ -263,6 +269,14 @@ static int init_skcipher(struct generic_desc *desc,
 				"\xad\x2b\x41\x7b\xe6\x6c\x37\x10";
 	u8 aes_128_cbc_ctext[] = "\xe3\x53\x77\x9c\x10\x79\xae\xb8"
 				"\x27\x08\x94\x2d\xbe\x77\x18\x1a";
+	u8 aes_192_cbc_ctext[] = "\x4f\x02\x1d\xb2\x43\xbc\x63\x3d"
+				"\x71\x78\x18\x3a\x9f\xa0\x71\xe8"
+				"\xb4\xd9\xad\xa9\xad\x7d\xed\xf4"
+				"\xe5\xe7\x38\x76\x3f\x69\x14\x5a"
+				"\x57\x1b\x24\x20\x12\xfb\x7a\xe0"
+				"\x7f\xa9\xba\xac\x3d\xf1\x02\xe0"
+				"\x08\xb0\xe2\x79\x88\x59\x88\x81"
+				"\xd9\x20\xa9\xe6\x4f\x56\x15\xcd";
 	u8 aes_256_cbc_ctext[] = "\xf5\x8c\x4c\x04\xd6\xe5\xf1\xba"
 				"\x77\x9e\xab\xfb\x5f\x7b\xfb\xd6"
 				"\x9c\xfc\x4e\x96\x7e\xdb\x80\x8d"
@@ -271,7 +285,8 @@ static int init_skcipher(struct generic_desc *desc,
 				"\xa5\x30\xe2\x63\x04\x23\x14\x61"
 				"\xb2\xeb\x05\xe2\xc3\x9b\xe9\xfc"
 				"\xda\x6c\x19\x07\x8c\x6a\x9d\x1b";
-	int src_size, bsize;
+	int src_size;
+	size_t bsize;
 
 	if (!strcmp(desc->alg_name, "cbc(aes)")) {
 		if (key_bits == 128) {
@@ -297,6 +312,32 @@ static int init_skcipher(struct generic_desc *desc,
 			} else {
 				memcpy(desc->buf, aes_128_cbc_ctext, sizeof(aes_128_cbc_ctext));
 				src_size = max(strlen(aes_128_cbc_ctext), bsize);
+			}
+		} else if (key_bits == 192) {
+			// aes-192-cbc
+			memset(key, 0, sizeof(key));
+			key[0] = 0x8e;	key[1] = 0x73;	key[2] = 0xb0;	key[3] = 0xf7;
+			key[4] = 0xda;	key[5] = 0x0e;	key[6] = 0x64;	key[7] = 0x52;
+			key[8] = 0xc8;	key[9] = 0x10;	key[10] = 0xf3;	key[11] = 0x2b;
+			key[12] = 0x80;	key[13] = 0x90;	key[14] = 0x79;	key[15] = 0xe5;
+			key[16] = 0x62;	key[17] = 0xf8;	key[18] = 0xea;	key[19] = 0xd2;
+			key[20] = 0x52;	key[21] = 0x2c;	key[22] = 0x6b;	key[23] = 0x7b;
+			memcpy(desc->sk.key, key, 24);
+			desc->sk.keysize = 24;
+			memset(iv, 0, sizeof(iv));
+			iv[0] = 0x00;	iv[1] = 0x01;	iv[2] = 0x02;	iv[3] = 0x03;
+			iv[4] = 0x04;	iv[5] = 0x05;	iv[6] = 0x06;	iv[7] = 0x07;
+			iv[8] = 0x08;	iv[9] = 0x09;	iv[10] = 0x0a;	iv[11] = 0x0b;
+			iv[12] = 0x0c;	iv[13] = 0x0d;	iv[14] = 0x0e;	iv[15] = 0x0f;
+			memcpy(desc->sk.iv, iv, 16);
+			memset(desc->buf, 0, desc->len);
+			bsize = crypto_skcipher_blocksize(tfm);
+			if (desc->sk.encrypt_mode) {
+				memcpy(desc->buf, aes_192_cbc_ptext, sizeof(aes_192_cbc_ptext));
+				src_size = max(strlen(aes_192_cbc_ptext), bsize);
+			} else {
+				memcpy(desc->buf, aes_192_cbc_ctext, sizeof(aes_192_cbc_ctext));
+				src_size = max(strlen(aes_192_cbc_ctext), bsize);
 			}
 		} else if (key_bits == 256) {
 			// aes-256-cbc
@@ -418,7 +459,6 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 {
 	struct generic_desc *desc = NULL;
 	void *data = NULL;
-	int ret, digest_size;
 
 	data = kzalloc(buf_size, GFP_KERNEL);
 	if (data == NULL) {
@@ -489,7 +529,7 @@ static void free_generic_desc(struct generic_desc *desc)
 
 static void skcipher_work_func(struct work_struct *work)
 {
-	int ret, alg_type;
+	int alg_type;
 
 	struct generic_desc *desc = NULL;
 

@@ -66,6 +66,9 @@ module_param(alg_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 static int buf_size = PAGE_SIZE;
 module_param(buf_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
+static int key_bits = 128;
+module_param(key_bits, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+
 static char *mode_name = "perf";
 module_param(mode_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
@@ -234,63 +237,62 @@ static int init_skcipher(struct generic_desc *desc,
 {
 	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
 	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
-#if 0
-	u8 test_str[] = "Single block msg";
-#else
-	u8 test_str[] = "\x6b\xc1\xbe\xe2\x2e\x40\x9f\x96"
-		        "\xe9\x3d\x7e\x11\x73\x93\x17\x2a"
-			"\xae\x2d\x8a\x57\x1e\x03\xac\x9c"
-			"\x9e\xb7\x6f\xac\x45\xaf\x8e\x51"
-			"\x30\xc8\x1c\x46\xa3\x5c\xe4\x11"
-			"\xe5\xfb\xc1\x19\x1a\x0a\x52\xef"
-			"\xf6\x9f\x24\x45\xdf\x4f\x9b\x17"
-			"\xad\x2b\x41\x7b\xe6\x6c\x37\x10";
-#endif
+	u8 aes_128_cbc_str[] = "Single block msg";
+	u8 aes_256_cbc_str[] = "\x6b\xc1\xbe\xe2\x2e\x40\x9f\x96"
+				"\xe9\x3d\x7e\x11\x73\x93\x17\x2a"
+				"\xae\x2d\x8a\x57\x1e\x03\xac\x9c"
+				"\x9e\xb7\x6f\xac\x45\xaf\x8e\x51"
+				"\x30\xc8\x1c\x46\xa3\x5c\xe4\x11"
+				"\xe5\xfb\xc1\x19\x1a\x0a\x52\xef"
+				"\xf6\x9f\x24\x45\xdf\x4f\x9b\x17"
+				"\xad\x2b\x41\x7b\xe6\x6c\x37\x10";
 	int src_size, bsize;
 
 	if (!strcmp(desc->alg_name, "cbc(aes)")) {
-#if 0
-		// aes-128-cbc
-		memset(key, 0, sizeof(key));
-		key[0] = 0x06;	key[1] = 0xa9;	key[2] = 0x21;	key[3] = 0x40;
-		key[4] = 0x36;	key[5] = 0xb8;	key[6] = 0xa1;	key[7] = 0x5b;
-		key[8] = 0x51;	key[9] = 0x2e;	key[10] = 0x03;	key[11] = 0xd5;
-		key[12] = 0x34;	key[13] = 0x12;	key[14] = 0x00;	key[15] = 0x06;
-		memcpy(desc->sk.key, key, 16);
-		desc->sk.keysize = 16;
-		memset(iv, 0, sizeof(iv));
-		iv[0] = 0x3d;	iv[1] = 0xaf;	iv[2] = 0xba;	iv[3] = 0x42;
-		iv[4] = 0x9d;	iv[5] = 0x9e;	iv[6] = 0xb4;	iv[7] = 0x30;
-		iv[8] = 0xb4;	iv[9] = 0x22;	iv[10] = 0xda;	iv[11] = 0x80;
-		iv[12] = 0x2c;	iv[13] = 0x9f;	iv[14] = 0xac;	iv[15] = 0x41;
-		memcpy(desc->sk.iv, iv, 16);
-		memset(desc->buf, 0, desc->len);
-		memcpy(desc->buf, test_str, sizeof(test_str));
-#else
-		// aes-256-cbc
-		memset(key, 0, sizeof(key));
-		key[0] = 0x60;	key[1] = 0x3d;	key[2] = 0xeb;	key[3] = 0x10;
-		key[4] = 0x15;	key[5] = 0xca;	key[6] = 0x71;	key[7] = 0xbe;
-		key[8] = 0x2b;	key[9] = 0x73;	key[10] = 0xae;	key[11] = 0xf0;
-		key[12] = 0x85;	key[13] = 0x7d;	key[14] = 0x77;	key[15] = 0x81;
-		key[16] = 0x1f;	key[17] = 0x35;	key[18] = 0x2c;	key[19] = 0x07;
-		key[20] = 0x3b;	key[21] = 0x61;	key[22] = 0x08;	key[23] = 0xd7;
-		key[24] = 0x2d;	key[25] = 0x98;	key[26] = 0x10;	key[27] = 0xa3;
-		key[28] = 0x09;	key[29] = 0x14;	key[30] = 0xdf;	key[31] = 0xf4;
-		memcpy(desc->sk.key, key, 32);
-		desc->sk.keysize = 32;
-		memset(iv, 0, sizeof(iv));
-		iv[0] = 0x00;	iv[1] = 0x01;	iv[2] = 0x02;	iv[3] = 0x03;
-		iv[4] = 0x04;	iv[5] = 0x05;	iv[6] = 0x06;	iv[7] = 0x07;
-		iv[8] = 0x08;	iv[9] = 0x09;	iv[10] = 0x0a;	iv[11] = 0x0b;
-		iv[12] = 0x0c;	iv[13] = 0x0d;	iv[14] = 0x0e;	iv[15] = 0x0f;
-		memcpy(desc->sk.iv, iv, 16);
-		memset(desc->buf, 0, desc->len);
-		memcpy(desc->buf, test_str, sizeof(test_str));
-#endif
+		if (key_bits == 128) {
+			// aes-128-cbc
+			memset(key, 0, sizeof(key));
+			key[0] = 0x06;	key[1] = 0xa9;	key[2] = 0x21;	key[3] = 0x40;
+			key[4] = 0x36;	key[5] = 0xb8;	key[6] = 0xa1;	key[7] = 0x5b;
+			key[8] = 0x51;	key[9] = 0x2e;	key[10] = 0x03;	key[11] = 0xd5;
+			key[12] = 0x34;	key[13] = 0x12;	key[14] = 0x00;	key[15] = 0x06;
+			memcpy(desc->sk.key, key, 16);
+			desc->sk.keysize = 16;
+			memset(iv, 0, sizeof(iv));
+			iv[0] = 0x3d;	iv[1] = 0xaf;	iv[2] = 0xba;	iv[3] = 0x42;
+			iv[4] = 0x9d;	iv[5] = 0x9e;	iv[6] = 0xb4;	iv[7] = 0x30;
+			iv[8] = 0xb4;	iv[9] = 0x22;	iv[10] = 0xda;	iv[11] = 0x80;
+			iv[12] = 0x2c;	iv[13] = 0x9f;	iv[14] = 0xac;	iv[15] = 0x41;
+			memcpy(desc->sk.iv, iv, 16);
+			memset(desc->buf, 0, desc->len);
+			memcpy(desc->buf, aes_128_cbc_str, sizeof(aes_128_cbc_str));
+			bsize = crypto_skcipher_blocksize(tfm);
+			src_size = max(strlen(aes_128_cbc_str), bsize);
+		} else if (key_bits == 256) {
+			// aes-256-cbc
+			memset(key, 0, sizeof(key));
+			key[0] = 0x60;	key[1] = 0x3d;	key[2] = 0xeb;	key[3] = 0x10;
+			key[4] = 0x15;	key[5] = 0xca;	key[6] = 0x71;	key[7] = 0xbe;
+			key[8] = 0x2b;	key[9] = 0x73;	key[10] = 0xae;	key[11] = 0xf0;
+			key[12] = 0x85;	key[13] = 0x7d;	key[14] = 0x77;	key[15] = 0x81;
+			key[16] = 0x1f;	key[17] = 0x35;	key[18] = 0x2c;	key[19] = 0x07;
+			key[20] = 0x3b;	key[21] = 0x61;	key[22] = 0x08;	key[23] = 0xd7;
+			key[24] = 0x2d;	key[25] = 0x98;	key[26] = 0x10;	key[27] = 0xa3;
+			key[28] = 0x09;	key[29] = 0x14;	key[30] = 0xdf;	key[31] = 0xf4;
+			memcpy(desc->sk.key, key, 32);
+			desc->sk.keysize = 32;
+			memset(iv, 0, sizeof(iv));
+			iv[0] = 0x00;	iv[1] = 0x01;	iv[2] = 0x02;	iv[3] = 0x03;
+			iv[4] = 0x04;	iv[5] = 0x05;	iv[6] = 0x06;	iv[7] = 0x07;
+			iv[8] = 0x08;	iv[9] = 0x09;	iv[10] = 0x0a;	iv[11] = 0x0b;
+			iv[12] = 0x0c;	iv[13] = 0x0d;	iv[14] = 0x0e;	iv[15] = 0x0f;
+			memcpy(desc->sk.iv, iv, 16);
+			memset(desc->buf, 0, desc->len);
+			memcpy(desc->buf, aes_256_cbc_str, sizeof(aes_256_cbc_str));
+			bsize = crypto_skcipher_blocksize(tfm);
+			src_size = max(strlen(aes_256_cbc_str), bsize);
+		}
 	}
-	bsize = crypto_skcipher_blocksize(tfm);
-	src_size = max(strlen(test_str), bsize);
 	src_size = ALIGN(src_size, bsize);
 	if (src_size > desc->len) {
 		pr_err("Error. Source size (%d) exceeds limit (%d).\n",

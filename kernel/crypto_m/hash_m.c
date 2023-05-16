@@ -21,6 +21,9 @@ struct sdesc {
 struct skcipher_desc {
 	struct crypto_skcipher *tfm;
 	struct skcipher_request *req;
+	int (*cipher)(struct skcipher_request *req);
+	//DECLARE_CRYPTO_WAIT(wait);
+	struct crypto_wait wait;
 	u8 key[64];
 	u8 iv[16];
 	int keysize;
@@ -112,6 +115,42 @@ static int is_hash_alg(char *alg_name)
 	return 0;
 }
 
+static void measure_algm(struct generic_desc *desc)
+{
+	ktime_t kt_start, kt_end, kt_val;
+	int count = 0;
+	s64 delta_us;
+	s64 bytes;
+	int ret;
+
+	kt_start = ktime_get();
+	kt_val = ktime_add_ms(kt_start, 3000);
+	do {
+		if (desc->alg_type == ALG_SHASH) {
+			crypto_shash_digest(desc->s.shash, desc->buf, desc->len, desc->digest);
+		} else if (desc->alg_type == ALG_SKCIPHER) {
+			ret = desc->sk.cipher(desc->sk.req);
+			ret = crypto_wait_req(ret, &desc->sk.wait);
+			if (ret) {
+				pr_err("Error encrypt/decrypt data: %d\n", ret);
+				break;
+			}
+		}
+		kt_end = ktime_get();
+		count++;
+	} while (ktime_before(kt_end, kt_val));
+	delta_us = ktime_us_delta(kt_end, kt_start);
+	bytes = (s64)count * (s64)buf_size;
+	if (ret) {
+		pr_info("Error on running algorithm: %d\n", ret);
+	} else {
+		pr_info("count:%d, len:%d, bytes:%lld\n",
+			count, buf_size, bytes);
+		pr_info("Bandwith: %lldMB/s (%lldB, %lldus)\n",
+			bytes / delta_us, bytes, delta_us);
+	}
+}
+
 static int run_shash(struct generic_desc *desc)
 {
 	struct crypto_shash *tfm = NULL;
@@ -131,7 +170,8 @@ static int run_shash(struct generic_desc *desc)
 		alignmask = 15;
 	align_buf = (void *)ALIGN((unsigned long)desc->buf, alignmask);
 	align_digest = (void *)((unsigned long)desc->digest & ~alignmask);
-	crypto_shash_digest(desc->s.shash, align_buf, desc->len, align_digest);
+	//crypto_shash_digest(desc->s.shash, align_buf, desc->len, align_digest);
+	measure_algm(desc);
 	crypto_free_shash(tfm);
 	return 0;
 }
@@ -141,11 +181,13 @@ static int run_skcipher(struct generic_desc *desc)
 	struct crypto_skcipher *tfm = NULL;
 	struct skcipher_request *req = NULL;
 	struct scatterlist sg;
-	DECLARE_CRYPTO_WAIT(wait);
+	//DECLARE_CRYPTO_WAIT(wait);
 	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
 	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
 	int ret = -EINVAL;
 
+	init_completion(&desc->sk.wait.completion);
+	desc->sk.wait.err = 0;
 	if (key_bits == 128)
 		desc->sk.keysize = 16;
 	else if (key_bits == 192)
@@ -184,22 +226,17 @@ static int run_skcipher(struct generic_desc *desc)
 				      CRYPTO_TFM_REQ_MAY_BACKLOG |
 				      CRYPTO_TFM_REQ_MAY_SLEEP,
 				      crypto_req_done,
-				      &wait);
+				      &desc->sk.wait);
 	skcipher_request_set_crypt(req, &sg, &sg, desc->len, iv);
+	desc->sk.req = req;
 	if (desc->sk.encrypt_mode)
-		ret = crypto_skcipher_encrypt(req);
+		desc->sk.cipher = crypto_skcipher_encrypt;
 	else
-		ret = crypto_skcipher_decrypt(req);
-	ret = crypto_wait_req(ret, &wait);
-	if (ret) {
-		pr_err("Error encrypt data: %d\n", ret);
-		goto out_wait;
-	}
+		desc->sk.cipher = crypto_skcipher_decrypt;
+	measure_algm(desc);
 	skcipher_request_free(req);
 	crypto_free_skcipher(tfm);
 	return 0;
-out_wait:
-	skcipher_request_free(req);
 out:
 	crypto_free_skcipher(tfm);
 	return ret;
@@ -214,35 +251,6 @@ static int run_algm(struct generic_desc *desc)
 	else if (desc->alg_type == ALG_SKCIPHER)
 		ret = run_skcipher(desc);
 	return ret;
-}
-
-static void measure_algm(struct generic_desc *desc)
-{
-	ktime_t kt_start, kt_end, kt_val;
-	int count = 0;
-	s64 delta_us;
-	s64 bytes;
-	int ret;
-
-	kt_start = ktime_get();
-	kt_val = ktime_add_ms(kt_start, 3000);
-	do {
-		ret = run_algm(desc);
-		if (ret)
-			break;
-		kt_end = ktime_get();
-		count++;
-	} while (ktime_before(kt_end, kt_val));
-	delta_us = ktime_us_delta(kt_end, kt_start);
-	bytes = (s64)count * (s64)buf_size;
-	if (ret) {
-		pr_info("Error on running algorithm: %d\n", ret);
-	} else {
-		pr_info("count:%d, len:%d, bytes:%lld\n",
-			count, buf_size, bytes);
-		pr_info("Bandwith: %lldMB/s (%lldB, %lldus)\n",
-			bytes / delta_us, bytes, delta_us);
-	}
 }
 
 static int init_skcipher(struct generic_desc *desc,
@@ -520,7 +528,7 @@ static void free_generic_desc(struct generic_desc *desc)
 {
 	if (desc->alg_type == ALG_SHASH) {
 		vfree(desc->s.shash);
-		vfree(desc->digest);
+		kfree(desc->digest);
 	} else if (desc->alg_type == ALG_SKCIPHER) {
 	}
 	kfree(desc->buf);
@@ -547,7 +555,7 @@ static void skcipher_work_func(struct work_struct *work)
 		return;
 
 	if (!strcmp(mode_name, "perf"))
-		measure_algm(desc);
+		run_algm(desc);
 	else if (!strcmp(mode_name, "func"))
 		test_algm(desc);
 	else

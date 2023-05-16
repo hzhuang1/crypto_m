@@ -21,6 +21,8 @@ struct sdesc {
 struct skcipher_desc {
 	struct crypto_skcipher *tfm;
 	struct skcipher_request *req;
+	u8 key[64];
+	u8 iv[16];
 	int keysize;
 };
 
@@ -227,14 +229,50 @@ static void measure_algm(struct generic_desc *desc)
 	}
 }
 
+static int init_skcipher(struct generic_desc *desc,
+			struct crypto_skcipher *tfm)
+{
+	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
+	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
+	u8 test_str[] = "Single block msg";
+	int src_size, bsize;
+
+	if (!strcmp(desc->alg_name, "cbc(aes)")) {
+		memset(key, 0, sizeof(key));
+		key[0] = 0x06;	key[1] = 0xa9;	key[2] = 0x21;	key[3] = 0x40;
+		key[4] = 0x36;	key[5] = 0xb8;	key[6] = 0xa1;	key[7] = 0x5b;
+		key[8] = 0x51;	key[9] = 0x2e;	key[10] = 0x03;	key[11] = 0xd5;
+		key[12] = 0x34;	key[13] = 0x12;	key[14] = 0x00;	key[15] = 0x06;
+		memcpy(desc->sk.key, key, 16);
+		desc->sk.keysize = 16;
+		memset(iv, 0, sizeof(iv));
+		iv[0] = 0x3d;	iv[1] = 0xaf;	iv[2] = 0xba;	iv[3] = 0x42;
+		iv[4] = 0x9d;	iv[5] = 0x9e;	iv[6] = 0xb4;	iv[7] = 0x30;
+		iv[8] = 0xb4;	iv[9] = 0x22;	iv[10] = 0xda;	iv[11] = 0x80;
+		iv[12] = 0x2c;	iv[13] = 0x9f;	iv[14] = 0xac;	iv[15] = 0x41;
+		memcpy(desc->sk.iv, iv, 16);
+		memset(desc->buf, 0, desc->len);
+		memcpy(desc->buf, test_str, sizeof(test_str));
+	}
+	bsize = crypto_skcipher_blocksize(tfm);
+	src_size = max(strlen(test_str), bsize);
+	src_size = ALIGN(src_size, bsize);
+	if (src_size > desc->len) {
+		pr_err("Error. Source size (%d) exceeds limit (%d).\n",
+			src_size, desc->len);
+		return -EINVAL;
+	}
+	desc->len = src_size;
+	desc->digest_len = desc->len;
+	return 0;
+}
+
 static int test_skcipher(struct generic_desc *desc)
 {
 	struct crypto_skcipher *tfm = NULL;
 	struct skcipher_request *req = NULL;
 	struct scatterlist sg_src, sg_dst;
 	DECLARE_CRYPTO_WAIT(wait);
-	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
-	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
 	int ret = -EINVAL;
 
 	tfm = crypto_alloc_skcipher(alg_name, 0, 0);
@@ -243,43 +281,8 @@ static int test_skcipher(struct generic_desc *desc)
 			alg_name, PTR_ERR(tfm));
 		return PTR_ERR(tfm);
 	}
-	{
-		int src_size, bsize;
-
-		memset(key, 0, sizeof(key));
-		/*
-		key[0] = 0xe0;	key[1] = 0xe0;	key[2] = 0xe0;	key[3] = 0xe0;
-		key[4] = 0xf1;	key[5] = 0xf1;	key[6] = 0xf1;	key[7] = 0xf1;
-		*/
-		key[0] = 0x06;	key[1] = 0xa9;	key[2] = 0x21;	key[3] = 0x40;
-		key[4] = 0x36;	key[5] = 0xb8;	key[6] = 0xa1;	key[7] = 0x5b;
-		key[8] = 0x51;	key[9] = 0x2e;	key[10] = 0x03;	key[11] = 0xd5;
-		key[12] = 0x34;	key[13] = 0x12;	key[14] = 0x00;	key[15] = 0x06;
-		desc->sk.keysize = 16;
-		memset(iv, 0, sizeof(iv));
-		/*
-		iv[0] = 0x30;	iv[1] = 0x31;	iv[2] = 0x32;	iv[3] = 0x33;
-		iv[4] = 0x34;	iv[5] = 0x35;	iv[6] = 0x36;	iv[7] = 0x37;
-		*/
-		iv[0] = 0x3d;	iv[1] = 0xaf;	iv[2] = 0xba;	iv[3] = 0x42;
-		iv[4] = 0x9d;	iv[5] = 0x9e;	iv[6] = 0xb4;	iv[7] = 0x30;
-		iv[8] = 0xb4;	iv[9] = 0x22;	iv[10] = 0xda;	iv[11] = 0x80;
-		iv[12] = 0x2c;	iv[13] = 0x9f;	iv[14] = 0xac;	iv[15] = 0x41;
-		memset(desc->buf, 0, desc->len);
-		//memcpy(desc->buf, "hello", 5);
-		memcpy(desc->buf, "Single block msg", 16);
-		bsize = crypto_skcipher_blocksize(tfm);
-		src_size = max(16, bsize);
-		src_size = ALIGN(src_size, bsize);
-		if (src_size > desc->len) {
-			pr_err("Error. Source size (%d) exceeds limit (%d).\n",
-				src_size, desc->len);
-			return -EINVAL;
-		}
-		desc->len = src_size;
-		desc->digest_len = desc->len;
-	}
-	ret = crypto_skcipher_setkey(tfm, key, desc->sk.keysize);
+	init_skcipher(desc, tfm);
+	ret = crypto_skcipher_setkey(tfm, desc->sk.key, desc->sk.keysize);
 	if (ret) {
 		pr_err("Error on setting key: %d\n", ret);
 		goto out;
@@ -301,7 +304,8 @@ static int test_skcipher(struct generic_desc *desc)
 				      CRYPTO_TFM_REQ_MAY_SLEEP,
 				      crypto_req_done,
 				      &wait);
-	skcipher_request_set_crypt(req, &sg_src, &sg_dst, desc->len, iv);
+	skcipher_request_set_crypt(req, &sg_src, &sg_dst, desc->len,
+				desc->sk.iv);
 	ret = crypto_skcipher_encrypt(req);
 	ret = crypto_wait_req(ret, &wait);
 	if (ret) {

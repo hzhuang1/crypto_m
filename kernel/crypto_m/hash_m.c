@@ -253,11 +253,65 @@ static int run_algm(struct generic_desc *desc)
 	return ret;
 }
 
-static int init_skcipher(struct generic_desc *desc,
-			struct crypto_skcipher *tfm)
+static void set_skcipher_key(struct generic_desc *desc)
 {
 	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
 	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
+
+	if (key_bits == 128) {
+		memset(key, 0, sizeof(key));
+		key[0] = 0x06;	key[1] = 0xa9;	key[2] = 0x21;	key[3] = 0x40;
+		key[4] = 0x36;	key[5] = 0xb8;	key[6] = 0xa1;	key[7] = 0x5b;
+		key[8] = 0x51;	key[9] = 0x2e;	key[10] = 0x03;	key[11] = 0xd5;
+		key[12] = 0x34;	key[13] = 0x12;	key[14] = 0x00;	key[15] = 0x06;
+		memcpy(desc->sk.key, key, 16);
+		desc->sk.keysize = 16;
+		memset(iv, 0, sizeof(iv));
+		iv[0] = 0x3d;	iv[1] = 0xaf;	iv[2] = 0xba;	iv[3] = 0x42;
+		iv[4] = 0x9d;	iv[5] = 0x9e;	iv[6] = 0xb4;	iv[7] = 0x30;
+		iv[8] = 0xb4;	iv[9] = 0x22;	iv[10] = 0xda;	iv[11] = 0x80;
+		iv[12] = 0x2c;	iv[13] = 0x9f;	iv[14] = 0xac;	iv[15] = 0x41;
+		memcpy(desc->sk.iv, iv, 16);
+	} else if (key_bits == 192) {
+		memset(key, 0, sizeof(key));
+		key[0] = 0x8e;	key[1] = 0x73;	key[2] = 0xb0;	key[3] = 0xf7;
+		key[4] = 0xda;	key[5] = 0x0e;	key[6] = 0x64;	key[7] = 0x52;
+		key[8] = 0xc8;	key[9] = 0x10;	key[10] = 0xf3;	key[11] = 0x2b;
+		key[12] = 0x80;	key[13] = 0x90;	key[14] = 0x79;	key[15] = 0xe5;
+		key[16] = 0x62;	key[17] = 0xf8;	key[18] = 0xea;	key[19] = 0xd2;
+		key[20] = 0x52;	key[21] = 0x2c;	key[22] = 0x6b;	key[23] = 0x7b;
+		memcpy(desc->sk.key, key, 24);
+		desc->sk.keysize = 24;
+		memset(iv, 0, sizeof(iv));
+		iv[0] = 0x00;	iv[1] = 0x01;	iv[2] = 0x02;	iv[3] = 0x03;
+		iv[4] = 0x04;	iv[5] = 0x05;	iv[6] = 0x06;	iv[7] = 0x07;
+		iv[8] = 0x08;	iv[9] = 0x09;	iv[10] = 0x0a;	iv[11] = 0x0b;
+		iv[12] = 0x0c;	iv[13] = 0x0d;	iv[14] = 0x0e;	iv[15] = 0x0f;
+		memcpy(desc->sk.iv, iv, 16);
+	} else if (key_bits == 256) {
+		memset(key, 0, sizeof(key));
+		key[0] = 0x60;	key[1] = 0x3d;	key[2] = 0xeb;	key[3] = 0x10;
+		key[4] = 0x15;	key[5] = 0xca;	key[6] = 0x71;	key[7] = 0xbe;
+		key[8] = 0x2b;	key[9] = 0x73;	key[10] = 0xae;	key[11] = 0xf0;
+		key[12] = 0x85;	key[13] = 0x7d;	key[14] = 0x77;	key[15] = 0x81;
+		key[16] = 0x1f;	key[17] = 0x35;	key[18] = 0x2c;	key[19] = 0x07;
+		key[20] = 0x3b;	key[21] = 0x61;	key[22] = 0x08;	key[23] = 0xd7;
+		key[24] = 0x2d;	key[25] = 0x98;	key[26] = 0x10;	key[27] = 0xa3;
+		key[28] = 0x09;	key[29] = 0x14;	key[30] = 0xdf;	key[31] = 0xf4;
+		memcpy(desc->sk.key, key, 32);
+		desc->sk.keysize = 32;
+		memset(iv, 0, sizeof(iv));
+		iv[0] = 0x00;	iv[1] = 0x01;	iv[2] = 0x02;	iv[3] = 0x03;
+		iv[4] = 0x04;	iv[5] = 0x05;	iv[6] = 0x06;	iv[7] = 0x07;
+		iv[8] = 0x08;	iv[9] = 0x09;	iv[10] = 0x0a;	iv[11] = 0x0b;
+		iv[12] = 0x0c;	iv[13] = 0x0d;	iv[14] = 0x0e;	iv[15] = 0x0f;
+		memcpy(desc->sk.iv, iv, 16);
+	}
+}
+
+static int init_skcipher(struct generic_desc *desc,
+			struct crypto_skcipher *tfm)
+{
 	u8 aes_128_cbc_ptext[] = "Single block msg";
 	u8 aes_192_cbc_ptext[] = "\x6b\xc1\xbe\xe2\x2e\x40\x9f\x96"
 				"\xe9\x3d\x7e\x11\x73\x93\x17\x2a"
@@ -293,27 +347,33 @@ static int init_skcipher(struct generic_desc *desc,
 				"\xa5\x30\xe2\x63\x04\x23\x14\x61"
 				"\xb2\xeb\x05\xe2\xc3\x9b\xe9\xfc"
 				"\xda\x6c\x19\x07\x8c\x6a\x9d\x1b";
+	u8 aes_128_ecb_ctext[] = "\x3a\xe0\x0f\xbd\x31\xdf\xae\xed"
+				"\x4d\xa6\xe4\x4f\xe2\xc1\x1b\x4f";
+	u8 aes_192_ecb_ctext[] = "\xbd\x33\x4f\x1d\x6e\x45\xf2\x5f"
+				"\xf7\x12\xa2\x14\x57\x1f\xa5\xcc"
+				"\x97\x41\x04\x84\x6d\x0a\xd3\xad"
+				"\x77\x34\xec\xb3\xec\xee\x4e\xef"
+				"\xef\x7a\xfd\x22\x70\xe2\xe6\x0a"
+				"\xdc\xe0\xba\x2f\xac\xe6\x44\x4e"
+				"\x9a\x4b\x41\xba\x73\x8d\x6c\x72"
+				"\xfb\x16\x69\x16\x03\xc1\x8e\x0e";
+	u8 aes_256_ecb_ctext[] = "\xf3\xee\xd1\xbd\xb5\xd2\xa0\x3c"
+				"\x06\x4b\x5a\x7e\x3d\xb1\x81\xf8"
+				"\x59\x1c\xcb\x10\xd4\x10\xed\x26"
+				"\xdc\x5b\xa7\x4a\x31\x36\x28\x70"
+				"\xb6\xed\x21\xb9\x9c\xa6\xf4\xf9"
+				"\xf1\x53\xe7\xb1\xbe\xaf\xed\x1d"
+				"\x23\x30\x4b\x7a\x39\xf9\xf3\xff"
+				"\x06\x7d\x8d\x8f\x9e\x24\xec\xc7";
 	int src_size;
 	size_t bsize;
 
+	set_skcipher_key(desc);
+	memset(desc->buf, 0, desc->len);
+	bsize = crypto_skcipher_blocksize(tfm);
 	if (!strcmp(desc->alg_name, "cbc(aes)")) {
 		if (key_bits == 128) {
 			// aes-128-cbc
-			memset(key, 0, sizeof(key));
-			key[0] = 0x06;	key[1] = 0xa9;	key[2] = 0x21;	key[3] = 0x40;
-			key[4] = 0x36;	key[5] = 0xb8;	key[6] = 0xa1;	key[7] = 0x5b;
-			key[8] = 0x51;	key[9] = 0x2e;	key[10] = 0x03;	key[11] = 0xd5;
-			key[12] = 0x34;	key[13] = 0x12;	key[14] = 0x00;	key[15] = 0x06;
-			memcpy(desc->sk.key, key, 16);
-			desc->sk.keysize = 16;
-			memset(iv, 0, sizeof(iv));
-			iv[0] = 0x3d;	iv[1] = 0xaf;	iv[2] = 0xba;	iv[3] = 0x42;
-			iv[4] = 0x9d;	iv[5] = 0x9e;	iv[6] = 0xb4;	iv[7] = 0x30;
-			iv[8] = 0xb4;	iv[9] = 0x22;	iv[10] = 0xda;	iv[11] = 0x80;
-			iv[12] = 0x2c;	iv[13] = 0x9f;	iv[14] = 0xac;	iv[15] = 0x41;
-			memcpy(desc->sk.iv, iv, 16);
-			memset(desc->buf, 0, desc->len);
-			bsize = crypto_skcipher_blocksize(tfm);
 			if (desc->sk.encrypt_mode) {
 				memcpy(desc->buf, aes_128_cbc_ptext, sizeof(aes_128_cbc_ptext));
 				src_size = max(strlen(aes_128_cbc_ptext), bsize);
@@ -323,23 +383,6 @@ static int init_skcipher(struct generic_desc *desc,
 			}
 		} else if (key_bits == 192) {
 			// aes-192-cbc
-			memset(key, 0, sizeof(key));
-			key[0] = 0x8e;	key[1] = 0x73;	key[2] = 0xb0;	key[3] = 0xf7;
-			key[4] = 0xda;	key[5] = 0x0e;	key[6] = 0x64;	key[7] = 0x52;
-			key[8] = 0xc8;	key[9] = 0x10;	key[10] = 0xf3;	key[11] = 0x2b;
-			key[12] = 0x80;	key[13] = 0x90;	key[14] = 0x79;	key[15] = 0xe5;
-			key[16] = 0x62;	key[17] = 0xf8;	key[18] = 0xea;	key[19] = 0xd2;
-			key[20] = 0x52;	key[21] = 0x2c;	key[22] = 0x6b;	key[23] = 0x7b;
-			memcpy(desc->sk.key, key, 24);
-			desc->sk.keysize = 24;
-			memset(iv, 0, sizeof(iv));
-			iv[0] = 0x00;	iv[1] = 0x01;	iv[2] = 0x02;	iv[3] = 0x03;
-			iv[4] = 0x04;	iv[5] = 0x05;	iv[6] = 0x06;	iv[7] = 0x07;
-			iv[8] = 0x08;	iv[9] = 0x09;	iv[10] = 0x0a;	iv[11] = 0x0b;
-			iv[12] = 0x0c;	iv[13] = 0x0d;	iv[14] = 0x0e;	iv[15] = 0x0f;
-			memcpy(desc->sk.iv, iv, 16);
-			memset(desc->buf, 0, desc->len);
-			bsize = crypto_skcipher_blocksize(tfm);
 			if (desc->sk.encrypt_mode) {
 				memcpy(desc->buf, aes_192_cbc_ptext, sizeof(aes_192_cbc_ptext));
 				src_size = max(strlen(aes_192_cbc_ptext), bsize);
@@ -349,31 +392,41 @@ static int init_skcipher(struct generic_desc *desc,
 			}
 		} else if (key_bits == 256) {
 			// aes-256-cbc
-			memset(key, 0, sizeof(key));
-			key[0] = 0x60;	key[1] = 0x3d;	key[2] = 0xeb;	key[3] = 0x10;
-			key[4] = 0x15;	key[5] = 0xca;	key[6] = 0x71;	key[7] = 0xbe;
-			key[8] = 0x2b;	key[9] = 0x73;	key[10] = 0xae;	key[11] = 0xf0;
-			key[12] = 0x85;	key[13] = 0x7d;	key[14] = 0x77;	key[15] = 0x81;
-			key[16] = 0x1f;	key[17] = 0x35;	key[18] = 0x2c;	key[19] = 0x07;
-			key[20] = 0x3b;	key[21] = 0x61;	key[22] = 0x08;	key[23] = 0xd7;
-			key[24] = 0x2d;	key[25] = 0x98;	key[26] = 0x10;	key[27] = 0xa3;
-			key[28] = 0x09;	key[29] = 0x14;	key[30] = 0xdf;	key[31] = 0xf4;
-			memcpy(desc->sk.key, key, 32);
-			desc->sk.keysize = 32;
-			memset(iv, 0, sizeof(iv));
-			iv[0] = 0x00;	iv[1] = 0x01;	iv[2] = 0x02;	iv[3] = 0x03;
-			iv[4] = 0x04;	iv[5] = 0x05;	iv[6] = 0x06;	iv[7] = 0x07;
-			iv[8] = 0x08;	iv[9] = 0x09;	iv[10] = 0x0a;	iv[11] = 0x0b;
-			iv[12] = 0x0c;	iv[13] = 0x0d;	iv[14] = 0x0e;	iv[15] = 0x0f;
-			memcpy(desc->sk.iv, iv, 16);
-			memset(desc->buf, 0, desc->len);
-			bsize = crypto_skcipher_blocksize(tfm);
 			if (desc->sk.encrypt_mode) {
 				memcpy(desc->buf, aes_256_cbc_ptext, sizeof(aes_256_cbc_ptext));
 				src_size = max(strlen(aes_256_cbc_ptext), bsize);
 			} else {
 				memcpy(desc->buf, aes_256_cbc_ctext, sizeof(aes_256_cbc_ctext));
 				src_size = max(strlen(aes_256_cbc_ctext), bsize);
+			}
+		}
+	} else if (!strcmp(desc->alg_name, "ecb(aes)")) {
+		if (key_bits == 128) {
+			// aes-128-ecb
+			if (desc->sk.encrypt_mode) {
+				memcpy(desc->buf, aes_128_cbc_ptext, sizeof(aes_128_cbc_ptext));
+				src_size = max(strlen(aes_128_cbc_ptext), bsize);
+			} else {
+				memcpy(desc->buf, aes_128_ecb_ctext, sizeof(aes_128_ecb_ctext));
+				src_size = max(strlen(aes_128_ecb_ctext), bsize);
+			}
+		} else if (key_bits == 192) {
+			// aes-192-ecb
+			if (desc->sk.encrypt_mode) {
+				memcpy(desc->buf, aes_192_cbc_ptext, sizeof(aes_192_cbc_ptext));
+				src_size = max(strlen(aes_192_cbc_ptext), bsize);
+			} else {
+				memcpy(desc->buf, aes_192_ecb_ctext, sizeof(aes_192_ecb_ctext));
+				src_size = max(strlen(aes_192_ecb_ctext), bsize);
+			}
+		} else if (key_bits == 256) {
+			// aes-256-ecb
+			if (desc->sk.encrypt_mode) {
+				memcpy(desc->buf, aes_256_cbc_ptext, sizeof(aes_256_cbc_ptext));
+				src_size = max(strlen(aes_256_cbc_ptext), bsize);
+			} else {
+				memcpy(desc->buf, aes_256_ecb_ctext, sizeof(aes_256_ecb_ctext));
+				src_size = max(strlen(aes_256_ecb_ctext), bsize);
 			}
 		}
 	}

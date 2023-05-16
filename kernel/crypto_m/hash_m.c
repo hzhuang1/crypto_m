@@ -39,6 +39,7 @@ struct generic_desc {
 	void *digest;
 	int digest_len;
 	int alg_type;
+	char *alg_name;
 };
 
 MODULE_LICENSE("GPL");
@@ -62,6 +63,9 @@ module_param(alg_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
 static int buf_size = PAGE_SIZE;
 module_param(buf_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+
+static char *mode_name = "perf";
+module_param(mode_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
 static struct workqueue_struct *hash_workqueue;
 
@@ -223,11 +227,119 @@ static void measure_algm(struct generic_desc *desc)
 	}
 }
 
+static int test_skcipher(struct generic_desc *desc)
+{
+	struct crypto_skcipher *tfm = NULL;
+	struct skcipher_request *req = NULL;
+	struct scatterlist sg_src, sg_dst;
+	DECLARE_CRYPTO_WAIT(wait);
+	u8 iv[16];	/* AES-256-XTS takes a 16-byte IV */
+	u8 key[64];	/* AES-256-XTS takes a 64-byte key */
+	int ret = -EINVAL;
+
+	tfm = crypto_alloc_skcipher(alg_name, 0, 0);
+	if (IS_ERR(tfm)) {
+		pr_err("Can't allocate SKCIPHER %s (%ld)\n",
+			alg_name, PTR_ERR(tfm));
+		return PTR_ERR(tfm);
+	}
+	{
+		int src_size, bsize;
+
+		memset(key, 0, sizeof(key));
+		/*
+		key[0] = 0xe0;	key[1] = 0xe0;	key[2] = 0xe0;	key[3] = 0xe0;
+		key[4] = 0xf1;	key[5] = 0xf1;	key[6] = 0xf1;	key[7] = 0xf1;
+		*/
+		key[0] = 0x06;	key[1] = 0xa9;	key[2] = 0x21;	key[3] = 0x40;
+		key[4] = 0x36;	key[5] = 0xb8;	key[6] = 0xa1;	key[7] = 0x5b;
+		key[8] = 0x51;	key[9] = 0x2e;	key[10] = 0x03;	key[11] = 0xd5;
+		key[12] = 0x34;	key[13] = 0x12;	key[14] = 0x00;	key[15] = 0x06;
+		desc->sk.keysize = 16;
+		memset(iv, 0, sizeof(iv));
+		/*
+		iv[0] = 0x30;	iv[1] = 0x31;	iv[2] = 0x32;	iv[3] = 0x33;
+		iv[4] = 0x34;	iv[5] = 0x35;	iv[6] = 0x36;	iv[7] = 0x37;
+		*/
+		iv[0] = 0x3d;	iv[1] = 0xaf;	iv[2] = 0xba;	iv[3] = 0x42;
+		iv[4] = 0x9d;	iv[5] = 0x9e;	iv[6] = 0xb4;	iv[7] = 0x30;
+		iv[8] = 0xb4;	iv[9] = 0x22;	iv[10] = 0xda;	iv[11] = 0x80;
+		iv[12] = 0x2c;	iv[13] = 0x9f;	iv[14] = 0xac;	iv[15] = 0x41;
+		memset(desc->buf, 0, desc->len);
+		//memcpy(desc->buf, "hello", 5);
+		memcpy(desc->buf, "Single block msg", 16);
+		bsize = crypto_skcipher_blocksize(tfm);
+		src_size = max(16, bsize);
+		src_size = ALIGN(src_size, bsize);
+		if (src_size > desc->len) {
+			pr_err("Error. Source size (%d) exceeds limit (%d).\n",
+				src_size, desc->len);
+			return -EINVAL;
+		}
+		desc->len = src_size;
+		desc->digest_len = desc->len;
+	}
+	ret = crypto_skcipher_setkey(tfm, key, desc->sk.keysize);
+	if (ret) {
+		pr_err("Error on setting key: %d\n", ret);
+		goto out;
+	}
+
+	/* Allocate a request object */
+	req = skcipher_request_alloc(tfm, GFP_KERNEL);
+	if (!req) {
+		pr_err("Fail to request SKCIPHER object\n");
+		goto out;
+	}
+
+	/* Initialize the IV */
+
+	sg_init_one(&sg_src, desc->buf, desc->len);
+	sg_init_one(&sg_dst, desc->digest, desc->digest_len);
+	skcipher_request_set_callback(req,
+				      CRYPTO_TFM_REQ_MAY_BACKLOG |
+				      CRYPTO_TFM_REQ_MAY_SLEEP,
+				      crypto_req_done,
+				      &wait);
+	skcipher_request_set_crypt(req, &sg_src, &sg_dst, desc->len, iv);
+	ret = crypto_skcipher_encrypt(req);
+	ret = crypto_wait_req(ret, &wait);
+	if (ret) {
+		pr_err("Error encrypt data: %d\n", ret);
+		goto out_wait;
+	}
+	{
+		pr_err("src:");
+		dump_digest(desc->buf, desc->len);
+		pr_err("dst:");
+		dump_digest(desc->digest, desc->digest_len);
+	}
+	skcipher_request_free(req);
+	crypto_free_skcipher(tfm);
+	return 0;
+out_wait:
+	skcipher_request_free(req);
+out:
+	crypto_free_skcipher(tfm);
+	return ret;
+}
+
+static int test_algm(struct generic_desc *desc)
+{
+	int ret = -EINVAL;
+
+	if (desc->alg_type == ALG_SHASH)
+		pr_err("Need to implement testing SHASH function");
+	else if (desc->alg_type == ALG_SKCIPHER)
+		ret = test_skcipher(desc);
+	return ret;
+}
+
 static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 {
 	struct generic_desc *desc = NULL;
 	void *data = NULL;
-	int ret;
+	int ret, digest_size;
 
 	data = kzalloc(buf_size, GFP_KERNEL);
 	if (data == NULL) {
@@ -242,18 +354,22 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 	desc->buf = data;
 	desc->len = buf_size;
 
+	desc->alg_type = alg_type;
+	desc->alg_name = kstrdup(alg_name, GFP_KERNEL);
+	if (desc->alg_name == NULL)
+		goto out_alg;
+
+	desc->digest_len = desc->len;	// use source length first
+	desc->digest = kzalloc(buf_size, GFP_KERNEL);
+	if (desc->digest == NULL)
+		goto out_dig;
+
 	if (alg_type == ALG_SHASH) {
 		// reserve large memory block
-		desc->digest = vzalloc(512);
-		if (desc->digest == NULL) {
-			vfree(desc);
-			goto out;
-		}
 		desc->s.shash = vzalloc(PAGE_SIZE);
 		if (desc->s.shash == NULL) {
-			vfree(desc->digest);
-			vfree(desc);
-			goto out;
+			kfree(desc->digest);
+			goto out_diverse;
 		}
 	} else if (alg_type == ALG_SKCIPHER) {
 		get_random_bytes(data, buf_size);
@@ -266,10 +382,15 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 		else
 			desc->sk.keysize = 32;
 	} else
-		goto out;
-	desc->alg_type = alg_type;
+		goto out_diverse;
 	return desc;
 
+out_diverse:
+	kfree(desc->digest);
+out_dig:
+	kfree(desc->alg_name);
+out_alg:
+	vfree(desc);
 out:
 	kfree(data);
 	return NULL;
@@ -285,22 +406,6 @@ static void free_generic_desc(struct generic_desc *desc)
 	kfree(desc->buf);
 	vfree(desc);
 }
-
-#if 0
-static void *init_skcipher_data(void)
-{
-	u8 *data = NULL;
-
-	/* Prepare the input data */
-	data = kzalloc(buf_size, GFP_KERNEL);
-	if (!data) {
-		pr_err("Fail to allocate memory\n");
-		return NULL;
-	}
-	get_random_bytes(data, buf_size);
-	return data;
-}
-#endif
 
 static void skcipher_work_func(struct work_struct *work)
 {
@@ -321,11 +426,16 @@ static void skcipher_work_func(struct work_struct *work)
 	if (desc == NULL)
 		return;
 
-	measure_algm(desc);
+	if (!strcmp(mode_name, "perf"))
+		measure_algm(desc);
+	else if (!strcmp(mode_name, "func"))
+		test_algm(desc);
+	else
+		pr_err("Wrong mode: %s\n", mode_name);
 	free_generic_desc(desc);
 }
 
-static DECLARE_WORK(measure_skcipher_work, skcipher_work_func);
+static DECLARE_WORK(skcipher_work, skcipher_work_func);
 
 static int do_skcipher(void)
 {
@@ -335,7 +445,7 @@ static int do_skcipher(void)
 		return -ENOMEM;
 	}
 
-	queue_work(hash_workqueue, &measure_skcipher_work);
+	queue_work(hash_workqueue, &skcipher_work);
 	return 0;
 }
 

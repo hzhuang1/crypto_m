@@ -91,9 +91,17 @@ static int is_skcipher_alg(char *alg_name)
 {
 	if (!strcmp(alg_name, "xts(aes)"))
 		return 1;
-	if (!strcmp(alg_name, "cbc(aes)"))
+	if (!strcmp(alg_name, "cbc(aes)") ||
+		!strcmp(alg_name, "cbc(aes-generic)") ||
+		!strcmp(alg_name, "cbc(aes-ce)") ||
+		!strcmp(alg_name, "cbc-aes-ce") ||
+		!strcmp(alg_name, "cbc-aes-neonbs"))
 		return 1;
-	if (!strcmp(alg_name, "ecb(aes)"))
+	if (!strcmp(alg_name, "ecb(aes)") ||
+		!strcmp(alg_name, "ecb(aes-generic)") ||
+		!strcmp(alg_name, "ecb(aes-ce)") ||
+		!strcmp(alg_name, "ecb-aes-ce") ||
+		!strcmp(alg_name, "ecb-aes-neonbs"))
 		return 1;
 	return 0;
 }
@@ -371,7 +379,11 @@ static int init_skcipher(struct generic_desc *desc,
 	set_skcipher_key(desc);
 	memset(desc->buf, 0, desc->len);
 	bsize = crypto_skcipher_blocksize(tfm);
-	if (!strcmp(desc->alg_name, "cbc(aes)")) {
+	if (!strcmp(desc->alg_name, "cbc(aes)") ||
+		!strcmp(desc->alg_name, "cbc(aes-generic)") ||
+		!strcmp(desc->alg_name, "cbc(aes-ce)") ||
+		!strcmp(desc->alg_name, "cbc-aes-ce") ||
+		!strcmp(desc->alg_name, "cbc-aes-neonbs")) {
 		if (key_bits == 128) {
 			// aes-128-cbc
 			if (desc->sk.encrypt_mode) {
@@ -400,7 +412,11 @@ static int init_skcipher(struct generic_desc *desc,
 				src_size = max(strlen(aes_256_cbc_ctext), bsize);
 			}
 		}
-	} else if (!strcmp(desc->alg_name, "ecb(aes)")) {
+	} else if (!strcmp(desc->alg_name, "ecb(aes)") ||
+			!strcmp(desc->alg_name, "ecb(aes-generic)") ||
+			!strcmp(desc->alg_name, "ecb(aes-ce)") ||
+			!strcmp(desc->alg_name, "ecb-aes-neonbs") ||
+			!strcmp(desc->alg_name, "ecb-aes-ce")) {
 		if (key_bits == 128) {
 			// aes-128-ecb
 			if (desc->sk.encrypt_mode) {
@@ -555,9 +571,17 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 		get_random_bytes(data, buf_size);
 		if (!strcmp(alg_name, "xts(aes)"))
 			desc->sk.keysize = 64;
-		else if (!strcmp(alg_name, "cbc(aes)"))
+		else if (!strcmp(alg_name, "cbc(aes)") ||
+			!strcmp(alg_name, "cbc(aes-generic)") ||
+			!strcmp(alg_name, "cbc(aes-ce)") ||
+			!strcmp(alg_name, "cbc-aes-ce") ||
+			!strcmp(alg_name, "cbc-aes-neonbs"))
 			desc->sk.keysize = 32;
-		else if (!strcmp(alg_name, "ecb(aes)"))
+		else if (!strcmp(alg_name, "ecb(aes)") ||
+			!strcmp(alg_name, "ecb(aes-generic)") ||
+			!strcmp(alg_name, "ecb(aes-ce)") ||
+			!strcmp(alg_name, "ecb-aes-ce") ||
+			!strcmp(alg_name, "ecb-aes-neonbs"))
 			desc->sk.keysize = 32;
 		else
 			desc->sk.keysize = 32;

@@ -1,3 +1,4 @@
+#include <crypto/internal/cipher.h>
 #include <crypto/hash.h>
 #include <crypto/skcipher.h>
 #include <linux/crypto.h>
@@ -30,15 +31,25 @@ struct skcipher_desc {
 	int encrypt_mode;
 };
 
+struct cipher_desc {
+	struct crypto_cipher *tfm;
+	void (*cipher)(struct crypto_cipher *tfm, u8 *dst, const u8 *src);
+	u8 key[16];
+	int keysize;
+	int encrypt_mode;
+};
+
 enum {
 	ALG_SHASH = 0,
 	ALG_SKCIPHER,
+	ALG_CIPHER,
 };
 
 struct generic_desc {
 	union {
 		struct sdesc		s;
 		struct skcipher_desc	sk;
+		struct cipher_desc	c;
 	};
 	void *buf;
 	int len;	// buffer length
@@ -52,6 +63,8 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Haojian Zhuang");
 MODULE_DESCRIPTION("A simple module for crypto.");
 MODULE_VERSION("0.1");
+
+MODULE_IMPORT_NS(CRYPTO_INTERNAL);
 
 // The default hash algorithm is MD5.
 //static char *hash_name = "md5-generic";
@@ -103,6 +116,22 @@ static int is_skcipher_alg(char *alg_name)
 		!strcmp(alg_name, "ecb-aes-ce") ||
 		!strcmp(alg_name, "ecb-aes-neonbs"))
 		return 1;
+	if (!strcmp(alg_name, "cbc-sm4-neon") ||
+		!strcmp(alg_name, "cbc(sm4-generic)") ||
+		!strcmp(alg_name, "cbc-sm4-ce") ||
+		!strcmp(alg_name, "ecb-sm4-neon") ||
+		!strcmp(alg_name, "ecb(sm4-generic)") ||
+		!strcmp(alg_name, "ecb-sm4-ce"))
+		return 1;
+	return 0;
+}
+
+static int is_cipher_alg(char *alg_name)
+{
+	if (!strcmp(alg_name, "sm4") ||
+		!strcmp(alg_name, "sm4-generic") ||
+		!strcmp(alg_name, "sm4-ce"))
+		return 1;
 	return 0;
 }
 
@@ -120,6 +149,39 @@ static int is_hash_alg(char *alg_name)
 		return 1;
 	if (!strcmp(alg_name, "chacha20-generic"))
 		return 1;
+	return 0;
+}
+
+static int init_cipher(struct generic_desc *desc,
+			struct crypto_cipher *tfm)
+{
+	u8 sm4_key[] = "\x01\x23\x45\x67\x89\xab\xcd\xef"
+			"\xfe\xdc\xba\x98\x76\x54\x32\x10";
+	u8 sm4_ptext[] = "\x01\x23\x45\x67\x89\xab\xcd\xef"
+			"\xfe\xdc\xba\x98\x76\x54\x32\x10";
+	u8 sm4_ctext[] = "\x68\x1e\xdf\x34\xd2\x06\x96\x5e"
+			"\x86\xb3\xe9\x4f\x53\x6e\x42\x46";
+	int src_size;
+	size_t bsize;
+
+	memset(desc->c.key, 0, desc->c.keysize);
+	memcpy(desc->c.key, sm4_key, strlen(sm4_key));
+	memset(desc->buf, 0, desc->len);
+	bsize = crypto_cipher_blocksize(tfm);
+	if (desc->c.encrypt_mode) {
+		memcpy(desc->buf, sm4_ptext, sizeof(sm4_ptext));
+		src_size = max(strlen(sm4_ptext), bsize);
+	} else {
+		memcpy(desc->buf, sm4_ctext, sizeof(sm4_ctext));
+		src_size = max(strlen(sm4_ctext), bsize);
+	}
+	src_size = ALIGN(src_size, bsize);
+	if (src_size > desc->len) {
+		pr_err("Error. Source size (%d) exceeds limit (%d).\n",
+			src_size, desc->len);
+		return -EINVAL;
+	}
+	desc->len = src_size;
 	return 0;
 }
 
@@ -143,7 +205,16 @@ static void measure_algm(struct generic_desc *desc)
 				pr_err("Error encrypt/decrypt data: %d\n", ret);
 				break;
 			}
-		}
+		} else if (desc->alg_type == ALG_CIPHER) {
+			int len, bsize;
+			bsize = crypto_cipher_blocksize(desc->c.tfm);
+			for (len = buf_size; len > 0;) {
+				desc->c.cipher(desc->c.tfm, desc->digest,
+						desc->buf);
+				len = len - bsize;
+			}
+		} else
+			break;
 		kt_end = ktime_get();
 		count++;
 	} while (ktime_before(kt_end, kt_val));
@@ -250,6 +321,38 @@ out:
 	return ret;
 }
 
+static int run_cipher(struct generic_desc *desc)
+{
+	struct crypto_cipher *tfm = NULL;
+	int ret = -EINVAL;
+
+	tfm = crypto_alloc_cipher(desc->alg_name, 0, 0);
+	if (IS_ERR(tfm)) {
+		pr_err("Can't allocate CIPHER %s (%ld)\n",
+			alg_name, PTR_ERR(tfm));
+		return PTR_ERR(tfm);
+	}
+	desc->c.tfm = tfm;
+	init_cipher(desc, tfm);
+	desc->len = buf_size;
+	get_random_bytes(desc->buf, desc->len);
+	ret = crypto_cipher_setkey(tfm, desc->c.key, desc->c.keysize);
+	if (ret) {
+		pr_err("Error on setting key: %d\n", ret);
+		goto out;
+	}
+	if (desc->c.encrypt_mode)
+		desc->c.cipher = crypto_cipher_encrypt_one;
+	else
+		desc->c.cipher = crypto_cipher_decrypt_one;
+	measure_algm(desc);
+	crypto_free_cipher(tfm);
+	return 0;
+out:
+	crypto_free_cipher(tfm);
+	return ret;
+}
+
 static int run_algm(struct generic_desc *desc)
 {
 	int ret = -EINVAL;
@@ -258,6 +361,8 @@ static int run_algm(struct generic_desc *desc)
 		ret = run_shash(desc);
 	else if (desc->alg_type == ALG_SKCIPHER)
 		ret = run_skcipher(desc);
+	else if (desc->alg_type == ALG_CIPHER)
+		ret = run_cipher(desc);
 	return ret;
 }
 
@@ -337,6 +442,10 @@ static int init_skcipher(struct generic_desc *desc,
 				"\xe5\xfb\xc1\x19\x1a\x0a\x52\xef"
 				"\xf6\x9f\x24\x45\xdf\x4f\x9b\x17"
 				"\xad\x2b\x41\x7b\xe6\x6c\x37\x10";
+	u8 sm4_cbc_ptext[] = "\xaa\xaa\xaa\xaa\xbb\xbb\xbb\xbb"
+				"\xcc\xcc\xcc\xcc\xdd\xdd\xdd\xdd"
+				"\xee\xee\xee\xee\xff\xff\xff\xff"
+				"\xaa\xaa\xaa\xaa\xbb\xbb\xbb\xbb";
 	u8 aes_128_cbc_ctext[] = "\xe3\x53\x77\x9c\x10\x79\xae\xb8"
 				"\x27\x08\x94\x2d\xbe\x77\x18\x1a";
 	u8 aes_192_cbc_ctext[] = "\x4f\x02\x1d\xb2\x43\xbc\x63\x3d"
@@ -373,6 +482,10 @@ static int init_skcipher(struct generic_desc *desc,
 				"\xf1\x53\xe7\xb1\xbe\xaf\xed\x1d"
 				"\x23\x30\x4b\x7a\x39\xf9\xf3\xff"
 				"\x06\x7d\x8d\x8f\x9e\x24\xec\xc7";
+	u8 sm4_cbc_ctext[] = "\x78\xeb\xb1\x1c\xc4\x0b\x0a\x48"
+				"\x31\x2a\xae\xb2\x04\x02\x44\xcb"
+				"\x4c\xb7\x01\x69\x51\x90\x92\x26"
+				"\x97\x9b\x0d\x15\xdc\x6a\x8f\x6d";
 	int src_size;
 	size_t bsize;
 
@@ -444,6 +557,16 @@ static int init_skcipher(struct generic_desc *desc,
 				memcpy(desc->buf, aes_256_ecb_ctext, sizeof(aes_256_ecb_ctext));
 				src_size = max(strlen(aes_256_ecb_ctext), bsize);
 			}
+		}
+	} else if (!strcmp(desc->alg_name, "cbc(sm4-generic)") ||
+			!strcmp(desc->alg_name, "cbc-sm4-neon") ||
+			!strcmp(desc->alg_name, "cbc-sm4-ce")) {
+		if (desc->c.encrypt_mode) {
+			memcpy(desc->buf, sm4_cbc_ptext, strlen(sm4_cbc_ptext));
+			src_size = max(strlen(sm4_cbc_ptext), bsize);
+		} else {
+			memcpy(desc->buf, sm4_cbc_ctext, strlen(sm4_cbc_ctext));
+			src_size = max(strlen(sm4_cbc_ctext), bsize);
 		}
 	}
 	src_size = ALIGN(src_size, bsize);
@@ -521,6 +644,47 @@ out:
 	return ret;
 }
 
+static int test_cipher(struct generic_desc *desc)
+{
+	struct crypto_cipher *tfm = NULL;
+	int ret = -EINVAL, bsize, len;
+
+	tfm = crypto_alloc_cipher(alg_name, 0, 0);
+	if (IS_ERR(tfm)) {
+		pr_err("Can't allocate CIPHER %s (%ld)\n",
+			alg_name, PTR_ERR(tfm));
+		return PTR_ERR(tfm);
+	}
+	init_cipher(desc, tfm);
+	desc->digest_len = desc->len;
+	ret = crypto_cipher_setkey(tfm, desc->c.key, desc->c.keysize);
+	if (ret) {
+		pr_err("Error on setting key: %d\n", ret);
+		goto out;
+	}
+	bsize = crypto_cipher_blocksize(tfm);
+	for (len = desc->len; len > 0;) {
+		if (desc->c.encrypt_mode)
+			crypto_cipher_encrypt_one(tfm, desc->digest,
+						desc->buf);
+		else
+			crypto_cipher_decrypt_one(tfm, desc->digest,
+						desc->buf);
+		len = len - bsize;
+	}
+	{
+		pr_err("src:");
+		dump_digest(desc->buf, desc->len);
+		pr_err("dst:");
+		dump_digest(desc->digest, desc->digest_len);
+	}
+	crypto_free_cipher(tfm);
+	return 0;
+out:
+	crypto_free_cipher(tfm);
+	return ret;
+}
+
 static int test_algm(struct generic_desc *desc)
 {
 	int ret = -EINVAL;
@@ -529,6 +693,8 @@ static int test_algm(struct generic_desc *desc)
 		pr_err("Need to implement testing SHASH function");
 	else if (desc->alg_type == ALG_SKCIPHER)
 		ret = test_skcipher(desc);
+	else if (desc->alg_type == ALG_CIPHER)
+		ret = test_cipher(desc);
 	return ret;
 }
 
@@ -583,9 +749,22 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			!strcmp(alg_name, "ecb-aes-ce") ||
 			!strcmp(alg_name, "ecb-aes-neonbs"))
 			desc->sk.keysize = 32;
+		else if (!strcmp(alg_name, "cbc-sm4-neon") ||
+			!strcmp(alg_name, "cbc(sm4-generic)") ||
+			!strcmp(alg_name, "cbc-sm4-ce") ||
+			!strcmp(alg_name, "ecb-sm4-neon") ||
+			!strcmp(alg_name, "ecb(sm4-generic)") ||
+			!strcmp(alg_name, "ecb-sm4-ce"))
+			desc->sk.keysize = 16;
 		else
 			desc->sk.keysize = 32;
 		desc->sk.encrypt_mode = encrypt_mode;
+	} else if (alg_type == ALG_CIPHER) {
+		if (!strcmp(alg_name, "sm4") ||
+			!strcmp(alg_name, "sm4-generic") ||
+			!strcmp(alg_name, "sm4-ce"))
+			desc->c.keysize = 16;
+		desc->c.encrypt_mode = encrypt_mode;
 	} else
 		goto out_diverse;
 	return desc;
@@ -622,6 +801,8 @@ static void skcipher_work_func(struct work_struct *work)
 		alg_type = ALG_SHASH;
 	else if (is_skcipher_alg(alg_name))
 		alg_type = ALG_SKCIPHER;
+	else if (is_cipher_alg(alg_name))
+		alg_type = ALG_CIPHER;
 	else {
 		pr_err("Invalid algorithm: %s\n", alg_name);
 		return;

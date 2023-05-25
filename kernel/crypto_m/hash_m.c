@@ -143,11 +143,41 @@ static int is_hash_alg(char *alg_name)
 		return 1;
 	if (!strcmp(alg_name, "sha1-generic"))
 		return 1;
+	if (!strcmp(alg_name, "sha1-ce"))
+		return 1;
 	if (!strcmp(alg_name, "sha256-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha256-arm64-neon"))
+		return 1;
+	if (!strcmp(alg_name, "sha256-ce"))
+		return 1;
+	if (!strcmp(alg_name, "sha3-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha3-ce"))
+		return 1;
+	if (!strcmp(alg_name, "sha3-256-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha3-256-ce"))
+		return 1;
+	if (!strcmp(alg_name, "sha3-384-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha3-384-ce"))
+		return 1;
+	if (!strcmp(alg_name, "sha3-512-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha3-512-ce"))
 		return 1;
 	if (!strcmp(alg_name, "sha512-generic"))
 		return 1;
+	if (!strcmp(alg_name, "sha512-ce"))
+		return 1;
 	if (!strcmp(alg_name, "chacha20-generic"))
+		return 1;
+	if (!strcmp(alg_name, "chacha20-neon"))
+		return 1;
+	if (!strcmp(alg_name, "sm3-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sm3-ce"))
 		return 1;
 	return 0;
 }
@@ -580,6 +610,19 @@ static int init_skcipher(struct generic_desc *desc,
 	return 0;
 }
 
+static int test_shash(struct generic_desc *desc)
+{
+	struct crypto_shash *tfm = NULL;
+
+	tfm = crypto_alloc_shash(alg_name, 0, 0);
+	if (IS_ERR(tfm)) {
+		pr_err("Can't allocate SHASH %s (%ld)\n",
+			alg_name, PTR_ERR(tfm));
+		return PTR_ERR(tfm);
+	}
+	return 0;
+}
+
 static int test_skcipher(struct generic_desc *desc)
 {
 	struct crypto_skcipher *tfm = NULL;
@@ -690,7 +733,7 @@ static int test_algm(struct generic_desc *desc)
 	int ret = -EINVAL;
 
 	if (desc->alg_type == ALG_SHASH)
-		pr_err("Need to implement testing SHASH function");
+		ret = test_shash(desc);
 	else if (desc->alg_type == ALG_SKCIPHER)
 		ret = test_skcipher(desc);
 	else if (desc->alg_type == ALG_CIPHER)

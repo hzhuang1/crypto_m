@@ -121,7 +121,8 @@ static int is_skcipher_alg(char *alg_name)
 		!strcmp(alg_name, "cbc-sm4-ce") ||
 		!strcmp(alg_name, "ecb-sm4-neon") ||
 		!strcmp(alg_name, "ecb(sm4-generic)") ||
-		!strcmp(alg_name, "ecb-sm4-ce"))
+		!strcmp(alg_name, "ecb-sm4-ce") ||
+		!strcmp(alg_name, "cbc(sm4)"))
 		return 1;
 	return 0;
 }
@@ -178,6 +179,8 @@ static int is_hash_alg(char *alg_name)
 	if (!strcmp(alg_name, "sm3-generic"))
 		return 1;
 	if (!strcmp(alg_name, "sm3-ce"))
+		return 1;
+	if (!strcmp(alg_name, "sm3-avx"))
 		return 1;
 	return 0;
 }
@@ -590,7 +593,8 @@ static int init_skcipher(struct generic_desc *desc,
 		}
 	} else if (!strcmp(desc->alg_name, "cbc(sm4-generic)") ||
 			!strcmp(desc->alg_name, "cbc-sm4-neon") ||
-			!strcmp(desc->alg_name, "cbc-sm4-ce")) {
+			!strcmp(desc->alg_name, "cbc-sm4-ce") ||
+			!strcmp(desc->alg_name, "cbc(sm4)")) {
 		if (desc->c.encrypt_mode) {
 			memcpy(desc->buf, sm4_cbc_ptext, strlen(sm4_cbc_ptext));
 			src_size = max(strlen(sm4_cbc_ptext), bsize);
@@ -797,7 +801,8 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			!strcmp(alg_name, "cbc-sm4-ce") ||
 			!strcmp(alg_name, "ecb-sm4-neon") ||
 			!strcmp(alg_name, "ecb(sm4-generic)") ||
-			!strcmp(alg_name, "ecb-sm4-ce"))
+			!strcmp(alg_name, "ecb-sm4-ce") ||
+			!strcmp(alg_name, "cbc(sm4)"))
 			desc->sk.keysize = 16;
 		else
 			desc->sk.keysize = 32;
@@ -882,6 +887,7 @@ static int __init hash_init(void)
 {
 	int ret;
 
+	pr_info("Enter HASH module. ALG: %s, encrypt_mode: %d\n", alg_name, encrypt_mode);
 	ret = crypto_has_alg(alg_name, 0, 0);
 	if (!ret) {
 		pr_warn("HASH algorithm %s does NOT exit.\n", alg_name);

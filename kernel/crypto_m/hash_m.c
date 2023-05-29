@@ -122,7 +122,8 @@ static int is_skcipher_alg(char *alg_name)
 		!strcmp(alg_name, "ecb-sm4-neon") ||
 		!strcmp(alg_name, "ecb(sm4-generic)") ||
 		!strcmp(alg_name, "ecb-sm4-ce") ||
-		!strcmp(alg_name, "cbc(sm4)"))
+		!strcmp(alg_name, "cbc(sm4)") ||
+		!strcmp(alg_name, "ecb(sm4)"))
 		return 1;
 	return 0;
 }
@@ -146,11 +147,30 @@ static int is_hash_alg(char *alg_name)
 		return 1;
 	if (!strcmp(alg_name, "sha1-ce"))
 		return 1;
+	if (!strcmp(alg_name, "sha1-ssse3"))
+		return 1;
+	if (!strcmp(alg_name, "sha1-avx"))
+		return 1;
+	if (!strcmp(alg_name, "sha1-avx2"))
+		return 1;
 	if (!strcmp(alg_name, "sha256-generic"))
 		return 1;
 	if (!strcmp(alg_name, "sha256-arm64-neon"))
 		return 1;
 	if (!strcmp(alg_name, "sha256-ce"))
+		return 1;
+	if (!strcmp(alg_name, "sha256-ssse3"))
+		return 1;
+	if (!strcmp(alg_name, "sha256-avx"))
+		return 1;
+	if (!strcmp(alg_name, "sha256-avx2"))
+		return 1;
+	if (!strcmp(alg_name, "sha512-generic"))
+		return 1;
+	if (!strcmp(alg_name, "sha512-ce"))
+		return 1;
+	if (!strcmp(alg_name, "sha512-ssse3") || !strcmp(alg_name, "sha512-avx") ||
+		!strcmp(alg_name, "sha512-avx2"))
 		return 1;
 	if (!strcmp(alg_name, "sha3-generic"))
 		return 1;
@@ -167,10 +187,6 @@ static int is_hash_alg(char *alg_name)
 	if (!strcmp(alg_name, "sha3-512-generic"))
 		return 1;
 	if (!strcmp(alg_name, "sha3-512-ce"))
-		return 1;
-	if (!strcmp(alg_name, "sha512-generic"))
-		return 1;
-	if (!strcmp(alg_name, "sha512-ce"))
 		return 1;
 	if (!strcmp(alg_name, "chacha20-generic"))
 		return 1;
@@ -594,7 +610,11 @@ static int init_skcipher(struct generic_desc *desc,
 	} else if (!strcmp(desc->alg_name, "cbc(sm4-generic)") ||
 			!strcmp(desc->alg_name, "cbc-sm4-neon") ||
 			!strcmp(desc->alg_name, "cbc-sm4-ce") ||
-			!strcmp(desc->alg_name, "cbc(sm4)")) {
+			!strcmp(desc->alg_name, "cbc(sm4)") ||
+			!strcmp(desc->alg_name, "ecb(sm4-generic)") ||
+			!strcmp(desc->alg_name, "ecb-sm4-neon") ||
+			!strcmp(desc->alg_name, "ecb-sm4-ce") ||
+			!strcmp(desc->alg_name, "ecb(sm4)")) {
 		if (desc->c.encrypt_mode) {
 			memcpy(desc->buf, sm4_cbc_ptext, strlen(sm4_cbc_ptext));
 			src_size = max(strlen(sm4_cbc_ptext), bsize);
@@ -802,7 +822,8 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			!strcmp(alg_name, "ecb-sm4-neon") ||
 			!strcmp(alg_name, "ecb(sm4-generic)") ||
 			!strcmp(alg_name, "ecb-sm4-ce") ||
-			!strcmp(alg_name, "cbc(sm4)"))
+			!strcmp(alg_name, "cbc(sm4)") ||
+			!strcmp(alg_name, "ecb(sm4)"))
 			desc->sk.keysize = 16;
 		else
 			desc->sk.keysize = 32;

@@ -1,5 +1,6 @@
-#include <crypto/internal/cipher.h>
+#include <crypto/aead.h>
 #include <crypto/hash.h>
+#include <crypto/internal/cipher.h>
 #include <crypto/skcipher.h>
 #include <linux/crypto.h>
 #include <linux/err.h>
@@ -17,6 +18,8 @@ struct sdesc {
 	void *align_digest;
 	unsigned long alignmask;
 	struct crypto_shash *tfm;
+	u8 key[64];
+	int keysize;
 };
 
 struct skcipher_desc {
@@ -39,10 +42,21 @@ struct cipher_desc {
 	int encrypt_mode;
 };
 
+struct aead_desc {
+	struct crypto_aead *tfm;
+	struct aead_request *req;
+	struct crypto_wait wait;
+	u8 key[64];
+	u8 iv[16];
+	int keysize;
+	int encrypt_mode;
+};
+
 enum {
 	ALG_SHASH = 0,
 	ALG_SKCIPHER,
 	ALG_CIPHER,
+	ALG_AEAD,
 };
 
 struct generic_desc {
@@ -50,6 +64,7 @@ struct generic_desc {
 		struct sdesc		s;
 		struct skcipher_desc	sk;
 		struct cipher_desc	c;
+		struct aead_desc	ad;
 	};
 	void *buf;
 	int len;	// buffer length
@@ -137,6 +152,15 @@ static int is_cipher_alg(char *alg_name)
 	return 0;
 }
 
+static int is_aead_alg(char *alg_name)
+{
+	if (!strcmp(alg_name, "gcm(aes)"))
+		return 1;
+	if (!strcmp(alg_name, "gcm(sm4)"))
+		return 1;
+	return 0;
+}
+
 static int is_hash_alg(char *alg_name)
 {
 	if (!strcmp(alg_name, "md4-generic"))
@@ -197,6 +221,14 @@ static int is_hash_alg(char *alg_name)
 	if (!strcmp(alg_name, "sm3-ce"))
 		return 1;
 	if (!strcmp(alg_name, "sm3-avx"))
+		return 1;
+	if (!strcmp(alg_name, "hmac(md5)"))
+		return 1;
+	if (!strcmp(alg_name, "hmac(sha1)"))
+		return 1;
+	if (!strcmp(alg_name, "hmac(sha256)"))
+		return 1;
+	if (!strcmp(alg_name, "hmac(sha512)"))
 		return 1;
 	return 0;
 }
@@ -290,6 +322,22 @@ static int run_shash(struct generic_desc *desc)
 		pr_err("Can't allocate SHASH %s (%ld)\n",
 			alg_name, PTR_ERR(tfm));
 		return PTR_ERR(tfm);
+	}
+	if (!strcmp(alg_name, "hmac(md5)") ||
+		!strcmp(alg_name, "hmac(sha1)") ||
+		!strcmp(alg_name, "hmac(sha256)") ||
+		!strcmp(alg_name, "hmac(sha512)")) {
+		int ret;
+
+		if (key_bits == 128)
+			desc->s.keysize = 16;
+		get_random_bytes(desc->s.key, desc->s.keysize);
+		ret = crypto_shash_setkey(tfm, desc->s.key, desc->s.keysize);
+		if (ret) {
+			pr_err("Error on setting key: %d\n", ret);
+			crypto_free_shash(tfm);
+			return ret;
+		}
 	}
 	desc->s.shash->tfm = tfm;
 	desc->digest_len = crypto_shash_digestsize(tfm);
@@ -402,6 +450,59 @@ out:
 	return ret;
 }
 
+static int run_aead(struct generic_desc *desc)
+{
+	struct crypto_aead *tfm = NULL;
+	struct aead_request *req = NULL;
+	struct scatterlist sg_src, sg_dst;
+	int ret = -EINVAL;
+
+	tfm = crypto_alloc_aead(desc->alg_name, 0, 0);
+	if (IS_ERR(tfm)) {
+		pr_err("Can't allocate AEAD %s (%ld)\n",
+			alg_name, PTR_ERR(tfm));
+		return PTR_ERR(tfm);
+	}
+
+	req = aead_request_alloc(tfm, GFP_KERNEL);
+	if (!req) {
+		pr_err("Fail to allocate request for %s\n",
+			alg_name);
+		ret = -ENOMEM;
+		goto out;
+	}
+	sg_init_one(&sg_src, desc->buf, desc->len);
+	sg_init_one(&sg_dst, desc->digest, desc->digest_len);
+	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG |
+				CRYPTO_TFM_REQ_MAY_SLEEP,
+				crypto_req_done,
+				&desc->ad.wait);
+	aead_request_set_crypt(req, &sg_src, &sg_dst, desc->len, desc->ad.iv);
+	if (desc->ad.encrypt_mode)
+		ret = crypto_aead_encrypt(req);
+	else
+		ret = crypto_aead_decrypt(req);
+	ret = crypto_wait_req(ret, &desc->ad.wait);
+	if (ret) {
+		pr_err("Error encrypt data: %d\n", ret);
+		goto out_wait;
+	}
+	{
+		pr_err("src:");
+		dump_digest(desc->buf, desc->len);
+		pr_err("dst:");
+		dump_digest(desc->digest, desc->digest_len);
+	}
+	aead_request_free(req);
+	crypto_free_aead(tfm);
+	return 0;
+out_wait:
+	aead_request_free(req);
+out:
+	crypto_free_aead(tfm);
+	return ret;
+}
+
 static int run_algm(struct generic_desc *desc)
 {
 	int ret = -EINVAL;
@@ -412,6 +513,8 @@ static int run_algm(struct generic_desc *desc)
 		ret = run_skcipher(desc);
 	else if (desc->alg_type == ALG_CIPHER)
 		ret = run_cipher(desc);
+	else if (desc->alg_type == ALG_AEAD)
+		ret = run_aead(desc);
 	return ret;
 }
 
@@ -634,9 +737,52 @@ static int init_skcipher(struct generic_desc *desc,
 	return 0;
 }
 
+static void set_shash_key(struct generic_desc *desc)
+{
+	u8 key[64];
+
+	if (key_bits == 128) {
+		memset(key, 0, sizeof(key));
+		key[0] = 0x0b;	key[1] = 0x0b;	key[2] = 0x0b;	key[3] = 0x0b;
+		key[4] = 0x0b;	key[5] = 0x0b;	key[6] = 0x0b;	key[7] = 0x0b;
+		key[8] = 0x0b;	key[9] = 0x0b;	key[10] = 0x0b;	key[11] = 0x0b;
+		key[12] = 0x0b;	key[13] = 0x0b;	key[14] = 0x0b;	key[15] = 0x0b;
+		memcpy(desc->s.key, key, 16);
+		desc->s.keysize = 16;
+	}
+}
+
+static int init_shash(struct generic_desc *desc, struct crypto_shash *tfm)
+{
+	u8 hmac_128_md5_ptext[] = "Hi There";
+	/*
+	u8 hmac_128_md5_ctext[] = "\x92\x94\x72\x7a\x36\x38\xbb\x1c"
+				"\x13\xf4\x8e\xf8\x15\x8b\xfc\x9d";
+	*/
+	int src_size;
+
+	if (!strcmp(desc->alg_name, "hmac(md5)")) {
+		set_shash_key(desc);
+		memset(desc->buf, 0, desc->len);
+		memcpy(desc->buf, hmac_128_md5_ptext, strlen(hmac_128_md5_ptext));
+		src_size = strlen(hmac_128_md5_ptext);
+		if (src_size > desc->len) {
+			pr_err("Error. Source size (%d) exceeds limit (%d).\n",
+				src_size, desc->len);
+			return -EINVAL;
+		}
+		desc->len = src_size;
+		desc->digest_len = 16;
+	}
+	return 0;
+}
+
 static int test_shash(struct generic_desc *desc)
 {
 	struct crypto_shash *tfm = NULL;
+	unsigned long alignmask;
+	void *align_buf, *align_digest;
+	int ret;
 
 	tfm = crypto_alloc_shash(alg_name, 0, 0);
 	if (IS_ERR(tfm)) {
@@ -644,7 +790,31 @@ static int test_shash(struct generic_desc *desc)
 			alg_name, PTR_ERR(tfm));
 		return PTR_ERR(tfm);
 	}
+	desc->s.shash->tfm = tfm;
+	desc->digest_len = crypto_shash_digestsize(tfm);
+	alignmask = crypto_shash_alignmask(tfm);
+	if (alignmask < 15)
+		alignmask = 15;
+	align_buf = (void *)ALIGN((unsigned long)desc->buf, alignmask);
+	align_digest = (void *)((unsigned long)desc->digest & ~alignmask);
+	init_shash(desc, tfm);
+	ret = crypto_shash_setkey(tfm, desc->s.key, desc->s.keysize);
+	if (ret) {
+		pr_err("Error on setting key: %d\n", ret);
+		goto out;
+	}
+	crypto_shash_digest(desc->s.shash, desc->buf, desc->len, desc->digest);
+	crypto_free_shash(tfm);
+	{
+		pr_err("src:");
+		dump_digest(desc->buf, desc->len);
+		pr_err("dst:");
+		dump_digest(desc->digest, desc->digest_len);
+	}
 	return 0;
+out:
+	crypto_free_shash(tfm);
+	return ret;
 }
 
 static int test_skcipher(struct generic_desc *desc)
@@ -752,6 +922,138 @@ out:
 	return ret;
 }
 
+static void set_aead_key(struct generic_desc *desc)
+{
+	u8 iv[16];
+	u8 key[64];
+
+	if (key_bits == 128) {
+		pr_err("key_bits equals to 128\n");
+		memset(key, 0, sizeof(key));
+		key[0] = 0xfe;	key[1] = 0xff;	key[2] = 0xe9;	key[3] = 0x92;
+		key[4] = 0x86;	key[5] = 0x65;	key[6] = 0x73;	key[7] = 0x1c;
+		key[8] = 0x6d;	key[9] = 0x6a;	key[10] = 0x8f;	key[11] = 0x94;
+		key[12] = 0x67;	key[13] = 0x30;	key[14] = 0x83;	key[15] = 0x08;
+		memcpy(desc->ad.key, key, 16);
+		desc->ad.keysize = 16;
+		memset(iv, 0, sizeof(iv));
+		iv[0] = 0xca;	iv[1] = 0xfe;	iv[2] = 0xba;	iv[3] = 0xbe;
+		iv[4] = 0xfa;	iv[5] = 0xce;	iv[6] = 0xdb;	iv[7] = 0xad;
+		iv[8] = 0xde;	iv[9] = 0xca;	iv[10] = 0xf8;	iv[11] = 0x88;
+		memcpy(desc->ad.iv, iv, 16);
+	}
+}
+
+static int init_aead(struct generic_desc *desc,
+		struct crypto_aead *tfm)
+{
+	u8 aes_128_gcm_ptext[] = "\xd9\x31\x32\x25\xf8\x84\x06\xe5"
+				"\xa5\x59\x09\xc5\xaf\xf5\x26\x9a"
+				"\x86\xa7\xa9\x53\x15\x34\xf7\xda"
+				"\x2e\x4c\x30\x3d\x8a\x31\x8a\x72"
+				"\x1c\x3c\x0c\x95\x95\x68\x09\x53"
+				"\x2f\xcf\x0e\x24\x49\xa6\xb5\x25"
+				"\xb1\x6a\xed\xf5\xaa\x0d\xe6\x57"
+				"\xba\x63\x7b\x39\x1a\xaf\xd2\x55";
+	u8 aes_128_gcm_ctext[] = "\x42\x83\x1e\xc2\x21\x77\x74\x24"
+				"\x4b\x72\x21\xb7\x84\xd0\xd4\x9c"
+				"\xe3\xaa\x21\x2f\x2c\x02\xa4\xe0"
+				"\x35\xc1\x7e\x23\x29\xac\xa1\x2e"
+				"\x21\xd5\x14\xb2\x54\x66\x93\x1c"
+				"\x7d\x8f\x6a\x5a\xac\x84\xaa\x05"
+				"\x1b\xa3\x0b\x39\x6a\x0a\xac\x97"
+				"\x3d\x58\xe0\x91\x47\x3f\x59\x85"
+				"\x4d\x5c\x2a\xf3\x27\xcd\x64\xa6"
+				"\x2c\xf3\x5a\xbd\x2b\xa6\xfa\xb4";
+	int src_size;
+	size_t bsize;
+
+	set_aead_key(desc);
+	memset(desc->buf, 0, desc->len);
+	bsize = crypto_aead_blocksize(tfm);
+	if (!strcmp(desc->alg_name, "gcm(aes)") ||
+		!strcmp(desc->alg_name, "gcm(sm4)")) {
+		if (key_bits == 128) {
+			if (desc->ad.encrypt_mode) {
+				memcpy(desc->buf, aes_128_gcm_ptext, sizeof(aes_128_gcm_ptext));
+				src_size = max(strlen(aes_128_gcm_ptext), bsize);
+			} else {
+				memcpy(desc->buf, aes_128_gcm_ctext, sizeof(aes_128_gcm_ctext));
+				src_size = max(strlen(aes_128_gcm_ctext), bsize);
+			}
+		}
+	}
+	src_size = ALIGN(src_size, bsize);
+	if (src_size > desc->len) {
+		pr_err("Error. Source size (%d) exceeds limit (%d).\n",
+			src_size, desc->len);
+		return -EINVAL;
+	}
+	desc->len = src_size;
+	desc->digest_len = desc->len;
+	return 0;
+}
+
+static int test_aead(struct generic_desc *desc)
+{
+	struct crypto_aead *tfm = NULL;
+	struct aead_request *req = NULL;
+	struct scatterlist sg_src, sg_dst;
+	int ret = -EINVAL;
+
+	tfm = crypto_alloc_aead(desc->alg_name, 0, 0);
+	if (IS_ERR(tfm)) {
+		pr_err("Can't allocate AEAD %s (%ld)\n",
+			alg_name, PTR_ERR(tfm));
+		return PTR_ERR(tfm);
+	}
+	init_aead(desc, tfm);
+	ret = crypto_aead_setkey(tfm, desc->ad.key, desc->ad.keysize);
+	if (ret) {
+		pr_err("Error on setting key: %d\n", ret);
+		goto out;
+	}
+
+	req = aead_request_alloc(tfm, GFP_KERNEL);
+	if (!req) {
+		pr_err("Fail to allocate request for %s\n",
+			alg_name);
+		ret = -ENOMEM;
+		goto out;
+	}
+	sg_init_one(&sg_src, desc->buf, desc->len);
+	sg_init_one(&sg_dst, desc->digest, desc->digest_len);
+	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG |
+				CRYPTO_TFM_REQ_MAY_SLEEP,
+				crypto_req_done,
+				&desc->ad.wait);
+	aead_request_set_crypt(req, &sg_src, &sg_dst, desc->len, desc->ad.iv);
+	pr_err("#%s, %d\n", __func__, __LINE__);
+	if (desc->ad.encrypt_mode)
+		ret = crypto_aead_encrypt(req);
+	else
+		ret = crypto_aead_decrypt(req);
+	ret = crypto_wait_req(ret, &desc->ad.wait);
+	if (ret) {
+		pr_err("Error encrypt data: %d\n", ret);
+		goto out_wait;
+	}
+	{
+		pr_err("src:");
+		dump_digest(desc->buf, desc->len);
+		pr_err("dst:");
+		dump_digest(desc->digest, desc->digest_len);
+	}
+	aead_request_free(req);
+	crypto_free_aead(tfm);
+	return 0;
+out_wait:
+	aead_request_free(req);
+out:
+	crypto_free_aead(tfm);
+	return ret;
+}
+
 static int test_algm(struct generic_desc *desc)
 {
 	int ret = -EINVAL;
@@ -762,6 +1064,8 @@ static int test_algm(struct generic_desc *desc)
 		ret = test_skcipher(desc);
 	else if (desc->alg_type == ALG_CIPHER)
 		ret = test_cipher(desc);
+	else if (desc->alg_type == ALG_AEAD)
+		ret = test_aead(desc);
 	return ret;
 }
 
@@ -834,6 +1138,8 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			!strcmp(alg_name, "sm4-ce"))
 			desc->c.keysize = 16;
 		desc->c.encrypt_mode = encrypt_mode;
+	} else if (alg_type == ALG_AEAD) {
+		desc->ad.encrypt_mode = encrypt_mode;
 	} else
 		goto out_diverse;
 	return desc;
@@ -872,6 +1178,8 @@ static void skcipher_work_func(struct work_struct *work)
 		alg_type = ALG_SKCIPHER;
 	else if (is_cipher_alg(alg_name))
 		alg_type = ALG_CIPHER;
+	else if (is_aead_alg(alg_name))
+		alg_type = ALG_AEAD;
 	else {
 		pr_err("Invalid algorithm: %s\n", alg_name);
 		return;

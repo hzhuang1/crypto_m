@@ -230,6 +230,12 @@ static int is_hash_alg(char *alg_name)
 		return 1;
 	if (!strcmp(alg_name, "hmac(sha512)"))
 		return 1;
+	if (!strcmp(alg_name, "hmac(sha3-256)"))
+		return 1;
+	if (!strcmp(alg_name, "hmac(sha3-384)"))
+		return 1;
+	if (!strcmp(alg_name, "hmac(sha3-512)"))
+		return 1;
 	return 0;
 }
 
@@ -326,7 +332,10 @@ static int run_shash(struct generic_desc *desc)
 	if (!strcmp(alg_name, "hmac(md5)") ||
 		!strcmp(alg_name, "hmac(sha1)") ||
 		!strcmp(alg_name, "hmac(sha256)") ||
-		!strcmp(alg_name, "hmac(sha512)")) {
+		!strcmp(alg_name, "hmac(sha512)") ||
+		!strcmp(alg_name, "hmac(sha3-256)") ||
+		!strcmp(alg_name, "hmac(sha3-384)") ||
+		!strcmp(alg_name, "hmac(sha3-512)")) {
 		int ret;
 
 		if (key_bits == 128)
@@ -761,7 +770,13 @@ static int init_shash(struct generic_desc *desc, struct crypto_shash *tfm)
 	*/
 	int src_size;
 
-	if (!strcmp(desc->alg_name, "hmac(md5)")) {
+	if (!strcmp(desc->alg_name, "hmac(md5)") ||
+		!strcmp(desc->alg_name, "hmac(sha1)") ||
+		!strcmp(desc->alg_name, "hmac(sha256)") ||
+		!strcmp(desc->alg_name, "hmac(sha512)") ||
+		!strcmp(desc->alg_name, "hmac(sha3-256)") ||
+		!strcmp(desc->alg_name, "hmac(sha3-384)") ||
+		!strcmp(desc->alg_name, "hmac(sha3-512)")) {
 		set_shash_key(desc);
 		memset(desc->buf, 0, desc->len);
 		memcpy(desc->buf, hmac_128_md5_ptext, strlen(hmac_128_md5_ptext));

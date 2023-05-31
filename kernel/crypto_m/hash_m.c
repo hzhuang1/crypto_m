@@ -787,7 +787,7 @@ static int init_shash(struct generic_desc *desc, struct crypto_shash *tfm)
 			return -EINVAL;
 		}
 		desc->len = src_size;
-		desc->digest_len = 16;
+		desc->digest_len = HASH_MAX_DIGESTSIZE;
 	}
 	return 0;
 }

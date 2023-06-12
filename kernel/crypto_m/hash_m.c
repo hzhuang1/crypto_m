@@ -462,7 +462,7 @@ static int run_aead(struct generic_desc *desc)
 {
 	struct crypto_aead *tfm = NULL;
 	struct aead_request *req = NULL;
-	struct scatterlist sg_src, sg_dst;
+	struct scatterlist sg_p[2], sg_c[2];
 	u8 iv[16];
 	u8 key[64];
 	int ret = -EINVAL;
@@ -486,10 +486,12 @@ static int run_aead(struct generic_desc *desc)
 		return PTR_ERR(tfm);
 	}
 
-	ret = crypto_aead_setauthsize(tfm, AES_GCM_TAG_SIZE);
-	if (ret) {
-		pr_err("Error on setting authsize: %d\n", ret);
-		goto out;
+	if (!desc->ad.encrypt_mode) {
+		ret = crypto_aead_setauthsize(tfm, AES_GCM_TAG_SIZE);
+		if (ret) {
+			pr_err("Error on setting authsize: %d\n", ret);
+			goto out;
+		}
 	}
 	get_random_bytes(key, desc->ad.keysize);
 	ret = crypto_aead_setkey(tfm, key, desc->ad.keysize);
@@ -506,21 +508,23 @@ static int run_aead(struct generic_desc *desc)
 		ret = -ENOMEM;
 		goto out;
 	}
-	sg_init_one(&sg_src, desc->buf, desc->len);
-	sg_init_one(&sg_dst, desc->digest, desc->digest_len);
+	sg_init_table(sg_p, 2);
+	sg_set_buf(&sg_p[0], desc->ad.assoc, desc->ad.assoc_len);
+	sg_set_buf(&sg_p[1], desc->buf, desc->len);
+	sg_init_table(sg_c, 2);
+	sg_set_buf(&sg_c[0], desc->ad.assoc, desc->ad.assoc_len);
+	sg_set_buf(&sg_c[1], desc->digest, desc->digest_len);
 	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG |
 				CRYPTO_TFM_REQ_MAY_SLEEP,
 				crypto_req_done,
 				&desc->ad.wait);
 	desc->ad.req = req;
 	if (desc->ad.encrypt_mode) {
-		aead_request_set_crypt(req, &sg_src, &sg_dst,
-					desc->len - AES_GCM_TAG_SIZE,
+		aead_request_set_crypt(req, sg_p, sg_c, desc->len,
 					desc->ad.iv);
 		ret = crypto_aead_encrypt(req);
 	} else {
-		aead_request_set_crypt(req, &sg_src, &sg_dst,
-					desc->len,
+		aead_request_set_crypt(req, sg_c, sg_p, desc->digest_len,
 					desc->ad.iv);
 		ret = crypto_aead_decrypt(req);
 	}
@@ -1054,6 +1058,7 @@ static int init_aead2(struct generic_desc *desc,
 	desc->digest_len = tvec->plen + tvec->authsize;
 	memset(desc->buf, 0, desc->len);
 	memset(desc->digest, 0, desc->digest_len);
+	memset(desc->ad.assoc, 0, tvec->alen);
 	if (desc->ad.encrypt_mode) {
 		memcpy(desc->buf, tvec->ptext, tvec->plen);
 	} else {
@@ -1062,9 +1067,10 @@ static int init_aead2(struct generic_desc *desc,
 	desc->ad.assoc_len = tvec->alen;
 	if (desc->ad.keysize < tvec->klen) {
 		pr_err("keysize is too small (%d)\n", desc->ad.keysize);
-		return -EINVAL;
+		desc->ad.keysize = tvec->klen;
 	}
 	memcpy(desc->ad.key, tvec->key, tvec->klen);
+	pr_err("keysize:%d\n", desc->ad.keysize);
 	iv_len = crypto_aead_ivsize(tfm);
 	if ((desc->ad.ivsize < tvec->ivlen) && (tvec->ivlen != iv_len)) {
 		pr_err("ivsize is too small (%d)\n", desc->ad.ivsize);

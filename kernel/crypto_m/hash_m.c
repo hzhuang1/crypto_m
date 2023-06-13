@@ -31,11 +31,11 @@ struct cipher_desc {
 };
 
 struct aead_desc {
+	void *assoc;
 	struct crypto_aead *tfm;
 	struct aead_request *req;
 	int (*cipher)(struct aead_request *req);
 	struct crypto_wait wait;
-	u8 assoc[64];
 	u8 key[64];
 	u8 iv[16];
 	int assoc_len;
@@ -64,6 +64,7 @@ struct generic_desc {
 	int digest_len;
 	int alg_type;
 	char *alg_name;
+	int page_order;	// order of both ptext buffer and ctext buffer
 };
 
 MODULE_LICENSE("GPL");
@@ -512,7 +513,6 @@ static int run_aead(struct generic_desc *desc)
 		ret = -ENOMEM;
 		goto out;
 	}
-	aead_request_set_ad(req, 0);
 	aead_request_set_ad(req, desc->ad.assoc_len);
 	sg_init_table(sg_p, 2);
 	sg_set_buf(&sg_p[0], desc->ad.assoc, desc->ad.assoc_len);
@@ -969,6 +969,7 @@ static int init_aead2(struct generic_desc *desc,
 	u8 iv[16];
 	int iv_len;
 
+	desc->ad.assoc_len = AES_GCM_TAG_SIZE;
 	if (random) {
 		desc->digest_len += AES_GCM_TAG_SIZE;
 		memset(desc->buf, 0, desc->len);
@@ -977,6 +978,7 @@ static int init_aead2(struct generic_desc *desc,
 		get_random_bytes(key, desc->ad.keysize);
 		memset(iv, 0, sizeof(iv));
 		get_random_bytes(iv, desc->ad.ivsize);
+		get_random_bytes(desc->ad.assoc, desc->ad.assoc_len);
 	} else {
 		desc->len = tvec->plen;
 		desc->digest_len = tvec->plen + tvec->authsize;
@@ -989,6 +991,7 @@ static int init_aead2(struct generic_desc *desc,
 			memcpy(desc->digest, tvec->ctext, tvec->plen + tvec->authsize);
 		}
 		desc->ad.assoc_len = tvec->alen;
+		memcpy(desc->ad.assoc, tvec->assoc, tvec->alen);
 		if (desc->ad.keysize < tvec->klen) {
 			pr_err("keysize is too small (%d). Use %d instead.\n",
 				desc->ad.keysize, tvec->klen);
@@ -1047,10 +1050,10 @@ static int test_aead(struct generic_desc *desc)
 
 	pr_err("assoc:%p, alen:%d, assoc_len:%d\n", tvec->assoc, tvec->alen, desc->ad.assoc_len);
 	sg_init_table(sg_p, 2);
-	sg_set_buf(&sg_p[0], tvec->assoc, tvec->alen);
+	sg_set_buf(&sg_p[0], desc->ad.assoc, tvec->alen);
 	sg_set_buf(&sg_p[1], desc->buf, desc->len);
 	sg_init_table(sg_c, 2);
-	sg_set_buf(&sg_c[0], tvec->assoc, tvec->alen);
+	sg_set_buf(&sg_c[0], desc->ad.assoc, tvec->alen);
 	sg_set_buf(&sg_c[1], desc->digest, desc->digest_len);
 	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG |
 				CRYPTO_TFM_REQ_MAY_SLEEP,
@@ -1105,19 +1108,24 @@ static int test_algm(struct generic_desc *desc)
 static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 {
 	struct generic_desc *desc = NULL;
-	void *data = NULL;
-
-	data = kzalloc(buf_size, GFP_KERNEL);
-	if (data == NULL) {
-		pr_err("Fail to allocate data memory\n");
-		return NULL;
-	}
+	int page_order;
+	struct page *p = NULL;
 
 	desc = vzalloc(sizeof(struct generic_desc));
 	if (desc == NULL)
-		goto out;
+		return NULL;
 
-	desc->buf = data;
+	// Add one more page to save additional data, such as TAG in AEAD.
+	// It could avoid to re-allocate memory.
+	page_order = get_order(buf_size) + 1;
+	desc->page_order = page_order;
+
+	p = alloc_pages(GFP_KERNEL, page_order);
+	if (p == NULL) {
+		pr_err("Fail to allocate data memory\n");
+		goto out;
+	}
+	desc->buf = page_address(p);
 	desc->len = buf_size;
 
 	desc->alg_type = alg_type;
@@ -1125,10 +1133,15 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 	if (desc->alg_name == NULL)
 		goto out_alg;
 
-	desc->digest_len = desc->len;	// use source length first
-	desc->digest = kzalloc(buf_size, GFP_KERNEL);
-	if (desc->digest == NULL)
+	p = alloc_pages(GFP_KERNEL, page_order);
+	if (p == NULL) {
+		pr_err("Fail to allocate digest memory\n");
 		goto out_dig;
+	}
+	desc->digest_len = desc->len;	// use source length first
+	desc->digest = page_address(p);
+	memset(desc->buf, 0, buf_size);
+	memset(desc->digest, 0, buf_size);
 
 	if (alg_type == ALG_SHASH) {
 		// reserve large memory block
@@ -1138,7 +1151,7 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			goto out_diverse;
 		}
 	} else if (alg_type == ALG_SKCIPHER) {
-		get_random_bytes(data, buf_size);
+		get_random_bytes(desc->buf, buf_size);
 		if (!strcmp(alg_name, "xts(aes)"))
 			desc->sk.keysize = 64;
 		else if (!strcmp(alg_name, "cbc(aes)") ||
@@ -1172,12 +1185,10 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			desc->c.keysize = 16;
 		desc->c.encrypt_mode = encrypt_mode;
 	} else if (alg_type == ALG_AEAD) {
-		// only extend the digest without updating digest_len
-		desc->digest = krealloc(desc->digest,
-					desc->digest_len + PAGE_SIZE,
-					GFP_KERNEL);
-		if (!desc->digest)
+		desc->ad.assoc = kzalloc(PAGE_SIZE, GFP_KERNEL);
+		if (desc->ad.assoc == NULL)
 			goto out_diverse;
+		// only extend the digest without updating digest_len
 		desc->ad.keysize = 16;
 		desc->ad.ivsize = 12;
 		if (!strcmp(alg_name, "gcm(aes)")) {
@@ -1191,13 +1202,13 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 	return desc;
 
 out_diverse:
-	kfree(desc->digest);
+	free_pages((unsigned long)desc->digest, desc->page_order);
 out_dig:
 	kfree(desc->alg_name);
 out_alg:
-	vfree(desc);
+	free_pages((unsigned long)desc->buf, desc->page_order);
 out:
-	kfree(data);
+	vfree(desc);
 	return NULL;
 }
 
@@ -1205,10 +1216,11 @@ static void free_generic_desc(struct generic_desc *desc)
 {
 	if (desc->alg_type == ALG_SHASH) {
 		vfree(desc->s.shash);
-		kfree(desc->digest);
-	} else if (desc->alg_type == ALG_SKCIPHER) {
+	} else if (desc->alg_type == ALG_AEAD) {
+		kfree(desc->ad.assoc);
 	}
-	kfree(desc->buf);
+	free_pages((unsigned long)desc->digest, desc->page_order);
+	free_pages((unsigned long)desc->buf, desc->page_order);
 	vfree(desc);
 }
 

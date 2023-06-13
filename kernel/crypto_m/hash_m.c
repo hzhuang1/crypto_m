@@ -100,6 +100,7 @@ static char *mode_name = "perf";
 module_param(mode_name, charp, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 
 static struct workqueue_struct *hash_workqueue;
+struct aead_testvec const *tvec;
 
 static int init_aead2(struct generic_desc *desc,
 		struct crypto_aead *tfm, int random);
@@ -461,7 +462,6 @@ out:
 	return ret;
 }
 
-const struct aead_testvec *tvec = &aes_gcm_tv[1];
 static int run_aead(struct generic_desc *desc)
 {
 	struct crypto_aead *tfm = NULL;
@@ -990,7 +990,8 @@ static int init_aead2(struct generic_desc *desc,
 		}
 		desc->ad.assoc_len = tvec->alen;
 		if (desc->ad.keysize < tvec->klen) {
-			pr_err("keysize is too small (%d)\n", desc->ad.keysize);
+			pr_err("keysize is too small (%d). Use %d instead.\n",
+				desc->ad.keysize, tvec->klen);
 			desc->ad.keysize = tvec->klen;
 		}
 		memcpy(desc->ad.key, tvec->key, tvec->klen);
@@ -1173,6 +1174,7 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 	} else if (alg_type == ALG_AEAD) {
 		get_random_bytes(data, buf_size);
 		if (!strcmp(alg_name, "gcm(aes)")) {
+			tvec = &aes_gcm_tv[2];
 			// only extend the digest without updating digest_len
 			desc->digest = krealloc(desc->digest,
 						desc->digest_len + PAGE_SIZE,

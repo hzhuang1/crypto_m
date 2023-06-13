@@ -1048,7 +1048,6 @@ static int test_aead(struct generic_desc *desc)
 	desc->ad.assoc_len = tvec->alen;
 	aead_request_set_ad(req, desc->ad.assoc_len);
 
-	pr_err("assoc:%p, alen:%d, assoc_len:%d\n", tvec->assoc, tvec->alen, desc->ad.assoc_len);
 	sg_init_table(sg_p, 2);
 	sg_set_buf(&sg_p[0], desc->ad.assoc, tvec->alen);
 	sg_set_buf(&sg_p[1], desc->buf, desc->len);
@@ -1195,6 +1194,8 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			tvec = &aes_gcm_tv[2];
 		} else if (!strcmp(alg_name, "gcm(aria)")) {
 			tvec = &aria_gcm_tv[0];
+		} else if (!strcmp(alg_name, "gcm(sm4)")) {
+			tvec = &sm4_gcm_tv[0];
 		}
 		desc->ad.encrypt_mode = encrypt_mode;
 	} else

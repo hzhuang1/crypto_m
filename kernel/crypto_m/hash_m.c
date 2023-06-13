@@ -152,6 +152,8 @@ static int is_aead_alg(char *alg_name)
 {
 	if (!strcmp(alg_name, "gcm(aes)"))
 		return 1;
+	if (!strcmp(alg_name, "gcm(aria)"))
+		return 1;
 	if (!strcmp(alg_name, "gcm(sm4)"))
 		return 1;
 	return 0;
@@ -511,14 +513,12 @@ static int run_aead(struct generic_desc *desc)
 		goto out;
 	}
 	aead_request_set_ad(req, 0);
-	//aead_request_set_ad(req, desc->ad.assoc_len);
+	aead_request_set_ad(req, desc->ad.assoc_len);
 	sg_init_table(sg_p, 2);
-	sg_set_buf(&sg_p[0], NULL, 0);
-	//sg_set_buf(&sg_p[0], desc->ad.assoc, desc->ad.assoc_len);
+	sg_set_buf(&sg_p[0], desc->ad.assoc, desc->ad.assoc_len);
 	sg_set_buf(&sg_p[1], desc->buf, desc->len);
 	sg_init_table(sg_c, 2);
-	sg_set_buf(&sg_c[0], NULL, 0);
-	//sg_set_buf(&sg_c[0], desc->ad.assoc, desc->ad.assoc_len);
+	sg_set_buf(&sg_c[0], desc->ad.assoc, desc->ad.assoc_len);
 	sg_set_buf(&sg_c[1], desc->digest, desc->digest_len);
 	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG |
 				CRYPTO_TFM_REQ_MAY_SLEEP,
@@ -1172,17 +1172,18 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			desc->c.keysize = 16;
 		desc->c.encrypt_mode = encrypt_mode;
 	} else if (alg_type == ALG_AEAD) {
-		get_random_bytes(data, buf_size);
+		// only extend the digest without updating digest_len
+		desc->digest = krealloc(desc->digest,
+					desc->digest_len + PAGE_SIZE,
+					GFP_KERNEL);
+		if (!desc->digest)
+			goto out_diverse;
+		desc->ad.keysize = 16;
+		desc->ad.ivsize = 12;
 		if (!strcmp(alg_name, "gcm(aes)")) {
 			tvec = &aes_gcm_tv[2];
-			// only extend the digest without updating digest_len
-			desc->digest = krealloc(desc->digest,
-						desc->digest_len + PAGE_SIZE,
-						GFP_KERNEL);
-			if (!desc->digest)
-				goto out_diverse;
-			desc->ad.keysize = 16;
-			desc->ad.ivsize = 12;
+		} else if (!strcmp(alg_name, "gcm(aria)")) {
+			tvec = &aria_gcm_tv[0];
 		}
 		desc->ad.encrypt_mode = encrypt_mode;
 	} else

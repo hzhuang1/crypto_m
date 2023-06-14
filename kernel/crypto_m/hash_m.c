@@ -157,6 +157,8 @@ static int is_aead_alg(char *alg_name)
 		return 1;
 	if (!strcmp(alg_name, "gcm(sm4)"))
 		return 1;
+	if (!strcmp(alg_name, "ccm(aes)"))
+		return 1;
 	return 0;
 }
 
@@ -965,33 +967,32 @@ out:
 static int init_aead2(struct generic_desc *desc,
 		struct crypto_aead *tfm, int random)
 {
-	u8 key[64];
-	u8 iv[16];
 	int iv_len;
 
 	desc->ad.assoc_len = AES_GCM_TAG_SIZE;
+	memset(desc->ad.assoc, 0, AES_GCM_TAG_SIZE);
+	memset(desc->ad.iv, 0, desc->ad.ivsize);
 	if (random) {
-		desc->digest_len += AES_GCM_TAG_SIZE;
-		memset(desc->buf, 0, desc->len);
-		memset(desc->digest, 0, desc->digest_len);
+		desc->len = buf_size;
+		desc->digest_len = buf_size + AES_GCM_TAG_SIZE;
 		get_random_bytes(desc->buf, desc->len);
-		get_random_bytes(key, desc->ad.keysize);
-		memset(iv, 0, sizeof(iv));
-		get_random_bytes(iv, desc->ad.ivsize);
+		get_random_bytes(desc->ad.key, desc->ad.keysize);
+		get_random_bytes(desc->ad.iv, desc->ad.ivsize);
 		get_random_bytes(desc->ad.assoc, desc->ad.assoc_len);
 	} else {
 		desc->len = tvec->plen;
 		desc->digest_len = tvec->plen + tvec->authsize;
 		memset(desc->buf, 0, desc->len);
 		memset(desc->digest, 0, desc->digest_len);
-		memset(desc->ad.assoc, 0, tvec->alen);
+		if (tvec->alen > AES_GCM_TAG_SIZE)
+			memset(desc->ad.assoc, 0, tvec->alen);
+		desc->ad.assoc_len = tvec->alen;
+		memcpy(desc->ad.assoc, tvec->assoc, tvec->alen);
 		if (desc->ad.encrypt_mode) {
 			memcpy(desc->buf, tvec->ptext, tvec->plen);
 		} else {
 			memcpy(desc->digest, tvec->ctext, tvec->plen + tvec->authsize);
 		}
-		desc->ad.assoc_len = tvec->alen;
-		memcpy(desc->ad.assoc, tvec->assoc, tvec->alen);
 		if (desc->ad.keysize < tvec->klen) {
 			pr_err("keysize is too small (%d). Use %d instead.\n",
 				desc->ad.keysize, tvec->klen);
@@ -1025,12 +1026,11 @@ static int test_aead(struct generic_desc *desc)
 		return PTR_ERR(tfm);
 	}
 	init_aead2(desc, tfm, 0);
-	if (!desc->ad.encrypt_mode) {
-		ret = crypto_aead_setauthsize(tfm, tvec->authsize);
-		if (ret) {
-			pr_err("Error on setting authsize of %s: %d\n", alg_name, ret);
-			goto out;
-		}
+	// crypto_aead_setauthsize should be used for both encryption and decryption.
+	ret = crypto_aead_setauthsize(tfm, tvec->authsize);
+	if (ret) {
+		pr_err("Error on setting authsize of %s: %d\n", alg_name, ret);
+		goto out;
 	}
 	ret = crypto_aead_setkey(tfm, desc->ad.key, desc->ad.keysize);
 	if (ret) {
@@ -1196,6 +1196,8 @@ static struct generic_desc *alloc_generic_desc(int alg_type, char *alg_name)
 			tvec = &aria_gcm_tv[0];
 		} else if (!strcmp(alg_name, "gcm(sm4)")) {
 			tvec = &sm4_gcm_tv[0];
+		} else if (!strcmp(alg_name, "ccm(aes)")) {
+			tvec = &aes_ccm_tv[0];
 		}
 		desc->ad.encrypt_mode = encrypt_mode;
 	} else

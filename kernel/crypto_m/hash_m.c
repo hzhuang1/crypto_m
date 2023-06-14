@@ -973,12 +973,16 @@ static int init_aead2(struct generic_desc *desc,
 	memset(desc->ad.assoc, 0, AES_GCM_TAG_SIZE);
 	memset(desc->ad.iv, 0, desc->ad.ivsize);
 	if (random) {
-		desc->len = buf_size;
-		desc->digest_len = buf_size + AES_GCM_TAG_SIZE;
-		get_random_bytes(desc->buf, desc->len);
-		get_random_bytes(desc->ad.key, desc->ad.keysize);
 		get_random_bytes(desc->ad.iv, desc->ad.ivsize);
 		get_random_bytes(desc->ad.assoc, desc->ad.assoc_len);
+		if (!strcmp(alg_name, "ccm(aes)")) {
+			desc->ad.iv[0] = 7;
+		}
+		desc->len = desc->len;
+		desc->digest_len = buf_size + AES_GCM_TAG_SIZE;
+		memset(desc->digest, 0, desc->digest_len);
+		get_random_bytes(desc->buf, desc->len);
+		get_random_bytes(desc->ad.key, desc->ad.keysize);
 	} else {
 		desc->len = tvec->plen;
 		desc->digest_len = tvec->plen + tvec->authsize;

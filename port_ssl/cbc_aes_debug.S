@@ -26,7 +26,11 @@ aes_cbc_01:
 	// key(256-bit) --> rounds(14)
 	// aes_key.rounds = 6 + key_length / 4;
 	sub	w5,w5,#6
-	// offset(x7): 4 key_length
+	// x5: key_length / 4
+	// x7: x3 + key_length * 4
+	// key_length (16: 128-bit), x5: 4, x7: x3 + 64
+	// key_length (24: 192-bit), x5: 6, x7: x3 + 96
+	// key_length (32: 256-bit), x5: 8, x7: x3 + 128
 	add	x7,x3,x5,lsl#4	// pointer to last 7 round keys
 	// w5: key_length / 4 - 2
 	sub	w5,w5,#2

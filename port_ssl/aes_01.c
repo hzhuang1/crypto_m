@@ -49,7 +49,7 @@ void dump_buf(unsigned char *buf, int len)
 	int i, j, cnt;
 
 	cnt = len / 16;
-	for (i = 0; i < cnt; i += 16) {
+	for (i = 0; i < cnt * 16; i += 16) {
 		printf("[0x%02x]: %02x %02x %02x %02x %02x %02x %02x %02x "
 		       "%02x %02x %02x %02x %02x %02x %02x %02x\n",
 		       i, buf[i], buf[i+1], buf[i+2], buf[i+3], buf[i+4],
@@ -282,70 +282,82 @@ void AES_encrypt(const unsigned char *in, unsigned char *out,
     Cipher(in, out, rk, key->rounds);
 }
 
-void t_cbc_01(void)
+void t_cbc_01(int i)
 {
 	struct cipher_testvec *vec = aes_cbc_tv_template;
 	int cnt = ARRAY_SIZE(aes_cbc_tv_template);
 	char iv[32];
 	AES_KEY key;
-	int i;
+	char *pkey = NULL;
 
-	init_buf();
-	for (i = 3; i < 4; i++) {
-		memset(iv, 0, 32);
-		memcpy(iv, vec[i].iv, strlen(vec[i].iv));
-		memcpy(key.rd_key, vec[i].key, vec[i].klen);
-		key.rounds = vec[i].klen / 4 + 6;
-		printf("key:\n");
-		dump_buf(key.rd_key, vec[i].klen);
-		printf("iv:\n");
-		dump_buf(iv, 16);
-		printf("ptext:\n");
-		dump_buf(vec[i].ptext, vec[i].len);
-		printf("klen:%d, rounds:%d\n", vec[i].klen, key.rounds);
-		aes_cbc(vec[i].ptext, vec_out, vec[i].len, &key,
-			iv, 1);
-		printf("ctext:\n");
-		dump_buf(vec_out, vec[i].len);
-		printf("iv out:\n");
-		dump_buf(iv, 16);
+	if (i >= cnt) {
+		printf("Index %d is too large.\n", i);
+		return;
 	}
+	init_buf();
+	memset(iv, 0, 32);
+	memcpy(iv, vec[i].iv, strlen(vec[i].iv));
+	memset(&key, 0, sizeof(AES_KEY));
+	if (vec[i].klen == 16) {
+		// 128-bit
+		//key.rd_key[0] = 1;
+		//key.rd_key[1] = 2;
+		//pkey = &key.rd_key[4];
+		//memcpy(pkey, vec[i].key, vec[i].klen);
+	} else if (vec[i].klen == 20) {
+		// 192-bit
+		memcpy(&key.rd_key[4], vec[i].key, vec[i].klen);
+	} else {
+		// 256-bit
+		//key.rd_key[0] = 1;
+		//pkey = &key.rd_key[0];
+		//memcpy(key.rd_key, vec[i].key, vec[i].klen);
+	}
+	key.rounds = vec[i].klen / 4 + 6;
+	printf("key:\n");
+	dump_buf(key.rd_key, 32);
+	printf("klen:%d, rounds:%d\n", vec[i].klen, key.rounds);
+	aes_cbc(vec[i].ptext, vec_out, vec[i].len, &key,
+		iv, 1);
+	printf("ctext:\n");
+	dump_buf(vec_out, vec[i].len);
 	free_buf();
 }
 
-void t_cbc_02(void)
+void t_cbc_02(int i)
 {
 	struct cipher_testvec *vec = aes_cbc_tv_template;
 	int cnt = ARRAY_SIZE(aes_cbc_tv_template);
 	char iv[32];
 	AES_KEY key;
-	int i;
 
-	init_buf();
-	for (i = 3; i < 4; i++) {
-		memset(iv, 0, 32);
-		memcpy(iv, vec[i].iv, strlen(vec[i].iv));
-		memcpy(key.rd_key, vec[i].key, vec[i].klen);
-		key.rounds = vec[i].klen / 4 + 6;
-		printf("key:\n");
-		dump_buf(key.rd_key, vec[i].klen);
-		printf("iv:\n");
-		dump_buf(iv, 16);
-		printf("ptext:\n");
-		dump_buf(vec[i].ptext, vec[i].len);
-		printf("klen:%d, rounds:%d\n", vec[i].klen, key.rounds);
-		AES_encrypt(vec[i].ptext, vec_out, &key);
-		printf("ctext:\n");
-		dump_buf(vec_out, vec[i].len);
-		printf("iv out:\n");
-		dump_buf(iv, 16);
+	if (i >= cnt) {
+		printf("Index %d is too large.\n", i);
+		return;
 	}
+	init_buf();
+
+	memset(iv, 0, 32);
+	memcpy(iv, vec[i].iv, strlen(vec[i].iv));
+	memcpy(key.rd_key, vec[i].key, vec[i].klen);
+	memset(&key, 0, sizeof(AES_KEY));
+	//key.rd_key[0] = 1;
+	//key.rd_key[1] = 2;
+	key.rounds = vec[i].klen / 4 + 6;
+	printf("key:\n");
+	dump_buf(key.rd_key, 32);
+	printf("klen:%d, rounds:%d\n", vec[i].klen, key.rounds);
+	AES_encrypt(vec[i].ptext, vec_out, &key);
+	printf("ctext:\n");
+	dump_buf(vec_out, vec[i].len);
 	free_buf();
 }
 
 int main(void)
 {
-	t_cbc_01();
-	t_cbc_02();
+	t_cbc_01(0);
+	t_cbc_02(0);
+	t_cbc_01(3);
+	t_cbc_02(3);
 	return 0;
 }

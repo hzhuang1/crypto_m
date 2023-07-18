@@ -1,6 +1,11 @@
 
 	.arch armv8-a+crypto
 
+/*
+ * extern void aes_cbc_01(const unsigned char *inp, unsigned char *out,
+ *			size_t length, const AES_KEY *key,
+ *			unsigned char *ivp, const int enc);
+ */
 	.globl	aes_cbc_01
 	.type	aes_cbc_01,%function
 	.align	5
@@ -16,23 +21,29 @@ aes_cbc_01:
 	// aes_key.rounds is filled in w5 now
 	ldr	w5,[x3,#240]
 	and	x2,x2,#-16
+	// load iv
 	ld1	{v6.16b},[x4]
+	// load ptext
 	ld1	{v0.16b},[x0],x8
 
-	// load aes_key with 256-bit
+	// aes_key.rd_key is 60x32 bits long (240 bytes long)
+	# V16 is used as rk0 in initial
 	ld1	{v16.4s,v17.4s},[x3]		// load key schedule...
 	// key(128-bit) --> rounds(10)
 	// key(192-bit) --> rounds(12)
 	// key(256-bit) --> rounds(14)
-	// aes_key.rounds = 6 + key_length / 4;
+	// aes_key.rounds = 6 + key_length (bytes) / 4;
 	sub	w5,w5,#6
-	// x5: key_length / 4
+	// x5: key_length (bytes) / 4
 	// x7: x3 + key_length * 4
-	// key_length (16: 128-bit), x5: 4, x7: x3 + 64
-	// key_length (24: 192-bit), x5: 6, x7: x3 + 96
-	// key_length (32: 256-bit), x5: 8, x7: x3 + 128
+	// key_length (16: 128-bit), x5: rk4
+	// key_length (24: 192-bit), x5: rk6
+	// key_length (32: 256-bit), x5: rk8
 	add	x7,x3,x5,lsl#4	// pointer to last 7 round keys
 	// w5: key_length / 4 - 2
+	// key(128-bit) --> w5(2)
+	// key(192-bit) --> w5(4)
+	// key(256-bit) --> w5(6)
 	sub	w5,w5,#2
 	ld1	{v18.4s,v19.4s},[x7],#32
 	ld1	{v20.4s,v21.4s},[x7],#32
@@ -44,65 +55,94 @@ aes_cbc_01:
 	b.eq	.Lcbc_dec
 
 	cmp	w5,#2
+	# in = in XOR iv
 	eor	v0.16b,v0.16b,v6.16b
-	eor	v5.16b,v16.16b,v7.16b
+	# what's this???
+	# why rk0 XOR rk10 for 128-bit?
+	# why rk0 XOR rk14 for 256-bit?
+	#eor	v5.16b,v16.16b,v7.16b
 	b.eq	.Lcbc_enc128
 
 	ld1	{v2.4s,v3.4s},[x7]
+	# x7: points to rk1
 	add	x7,x3,#16
+	# x6: points to rk4
 	add	x6,x3,#16*4
+	# x12: points to rk5
 	add	x12,x3,#16*5
 	aese	v0.16b,v16.16b
 	aesmc	v0.16b,v0.16b
+	# x14: points to rk6
 	add	x14,x3,#16*6
+	# x3: points to rk7
 	add	x3,x3,#16*7
 	b	.Lenter_cbc_enc
 
 .align	4
 .Loop_cbc_enc:
+	# rk0/next block of ptext
 	aese	v0.16b,v16.16b
 	aesmc	v0.16b,v0.16b
 	st1	{v6.16b},[x1],#16
 .Lenter_cbc_enc:
+	# rk1
 	aese	v0.16b,v17.16b
 	aesmc	v0.16b,v0.16b
+	# rk2
 	aese	v0.16b,v2.16b
 	aesmc	v0.16b,v0.16b
+	# V16(rk0/ptext) is replaced by rk4
 	ld1	{v16.4s},[x6]
 	cmp	w5,#4
+	# rk3
 	aese	v0.16b,v3.16b
 	aesmc	v0.16b,v0.16b
+	# V17(rk1) is replaced by rk5
 	ld1	{v17.4s},[x12]
 	b.eq	.Lcbc_enc192
 
+	# rk4 (256b)
 	aese	v0.16b,v16.16b
 	aesmc	v0.16b,v0.16b
+	# V16(rk0/rk4) is replaced by rk6
 	ld1	{v16.4s},[x14]
+	# rk5 (256b)
 	aese	v0.16b,v17.16b
 	aesmc	v0.16b,v0.16b
+	# V17(rk1/rk5) is replaced by rk7
 	ld1	{v17.4s},[x3]
 	nop
 
 .Lcbc_enc192:
+	# rk6 (256b)
 	aese	v0.16b,v16.16b
 	aesmc	v0.16b,v0.16b
 	subs	x2,x2,#16
+	# rk7 (256b)
 	aese	v0.16b,v17.16b
 	aesmc	v0.16b,v0.16b
 	csel	x8,xzr,x8,eq
+	# rk8 (256b)
 	aese	v0.16b,v18.16b
 	aesmc	v0.16b,v0.16b
+	# rk9 (256b)
 	aese	v0.16b,v19.16b
 	aesmc	v0.16b,v0.16b
+	# V16(rk0/rk4/rk6) is replaced by the next block of ptext
 	ld1	{v16.16b},[x0],x8
+	# rk10 (256b)
 	aese	v0.16b,v20.16b
 	aesmc	v0.16b,v0.16b
-	eor	v16.16b,v16.16b,v5.16b
+	#eor	v16.16b,v16.16b,v5.16b
+	# rk11 (256b)
 	aese	v0.16b,v21.16b
 	aesmc	v0.16b,v0.16b
+	# V17 is used. So load rk1 again into V17.
 	ld1	{v17.4s},[x7]		// re-pre-load rndkey[1]
+	# rk12 (256b)
 	aese	v0.16b,v22.16b
 	aesmc	v0.16b,v0.16b
+	# rk13 (256b)
 	aese	v0.16b,v23.16b
 	eor	v6.16b,v0.16b,v7.16b
 	b.hs	.Loop_cbc_enc
@@ -133,6 +173,9 @@ aes_cbc_01:
 	aesmc	v0.16b,v0.16b
 	aese	v0.16b,v19.16b
 	aesmc	v0.16b,v0.16b
+	# V16 is changed from rk0 to the next block of ptext
+	# V0 (the first block of ptext) is in use. So pre-load the next
+	# block into another V register.
 	ld1	{v16.16b},[x0],x8
 	aese	v0.16b,v20.16b
 	aesmc	v0.16b,v0.16b
@@ -140,7 +183,9 @@ aes_cbc_01:
 	aesmc	v0.16b,v0.16b
 	aese	v0.16b,v22.16b
 	aesmc	v0.16b,v0.16b
-	eor	v16.16b,v16.16b,v5.16b
+	# Why XOR between the next block of ptext and V5?
+	# V5: XOR between the first block of ptext and the last block of key
+	#eor	v16.16b,v16.16b,v5.16b
 	aese	v0.16b,v23.16b
 	eor	v6.16b,v0.16b,v7.16b
 	b.hs	.Loop_cbc_enc128

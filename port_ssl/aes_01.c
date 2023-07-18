@@ -22,6 +22,9 @@ extern void aes_v8_cbc_encrypt(const unsigned char *inp, unsigned char *out,
 typedef unsigned long long int u64;
 typedef unsigned int u32;
 
+typedef void (*block128_f) (const unsigned char in[16],
+                            unsigned char out[16], const void *key);
+
 typedef union {
     unsigned char b[8];
     u32 w[2];
@@ -282,6 +285,80 @@ void AES_encrypt(const unsigned char *in, unsigned char *out,
     Cipher(in, out, rk, key->rounds);
 }
 
+void CRYPTO_cbc128_encrypt(const unsigned char *in, unsigned char *out,
+                           size_t len, const void *key,
+                           unsigned char ivec[16], block128_f block)
+{
+    size_t n;
+    const unsigned char *iv = ivec;
+
+    if (len == 0)
+        return;
+
+    while (len) {
+        for (n = 0; n < 16 && n < len; ++n)
+            out[n] = in[n] ^ iv[n];
+        for (; n < 16; ++n)
+            out[n] = iv[n];
+        (*block) (out, out, key);
+        iv = out;
+        if (len <= 16)
+            break;
+        len -= 16;
+        in += 16;
+        out += 16;
+    }
+    if (ivec != iv)
+        memcpy(ivec, iv, 16);
+}
+
+void CRYPTO_cbc128_decrypt(const unsigned char *in, unsigned char *out,
+                           size_t len, const void *key,
+                           unsigned char ivec[16], block128_f block)
+{
+    size_t n;
+    union {
+        size_t t[16 / sizeof(size_t)];
+        unsigned char c[16];
+    } tmp;
+
+    if (len == 0)
+        return;
+
+    while (len) {
+        unsigned char c;
+        (*block) (in, tmp.c, key);
+        for (n = 0; n < 16 && n < len; ++n) {
+            c = in[n];
+            out[n] = tmp.c[n] ^ ivec[n];
+            ivec[n] = c;
+        }
+        if (len <= 16) {
+            for (; n < 16; ++n)
+                ivec[n] = in[n];
+            break;
+        }
+        len -= 16;
+        in += 16;
+        out += 16;
+    }
+}
+
+void AES_cbc_encrypt(const unsigned char *in, unsigned char *out,
+                     size_t len, const AES_KEY *key,
+                     unsigned char *ivec, const int enc)
+{
+
+    if (enc)
+        CRYPTO_cbc128_encrypt(in, out, len, key, ivec,
+                              (block128_f) AES_encrypt);
+/*
+    else
+        CRYPTO_cbc128_decrypt(in, out, len, key, ivec,
+                              (block128_f) AES_decrypt);
+*/
+}
+
 void t_cbc_01(int i)
 {
 	struct cipher_testvec *vec = aes_cbc_tv_template;
@@ -296,26 +373,12 @@ void t_cbc_01(int i)
 	}
 	init_buf();
 	memset(iv, 0, 32);
-	memcpy(iv, vec[i].iv, strlen(vec[i].iv));
+	//memcpy(iv, vec[i].iv, 16);
 	memset(&key, 0, sizeof(AES_KEY));
-	if (vec[i].klen == 16) {
-		// 128-bit
-		//key.rd_key[0] = 1;
-		//key.rd_key[1] = 2;
-		//pkey = &key.rd_key[4];
-		//memcpy(pkey, vec[i].key, vec[i].klen);
-	} else if (vec[i].klen == 20) {
-		// 192-bit
-		memcpy(&key.rd_key[4], vec[i].key, vec[i].klen);
-	} else {
-		// 256-bit
-		//key.rd_key[0] = 1;
-		//pkey = &key.rd_key[0];
-		//memcpy(key.rd_key, vec[i].key, vec[i].klen);
-	}
+	memcpy(key.rd_key, vec[i].key, vec[i].klen);
 	key.rounds = vec[i].klen / 4 + 6;
 	printf("key:\n");
-	dump_buf(key.rd_key, 32);
+	dump_buf(key.rd_key, 16);
 	printf("klen:%d, rounds:%d\n", vec[i].klen, key.rounds);
 	aes_cbc(vec[i].ptext, vec_out, vec[i].len, &key,
 		iv, 1);
@@ -338,16 +401,15 @@ void t_cbc_02(int i)
 	init_buf();
 
 	memset(iv, 0, 32);
-	memcpy(iv, vec[i].iv, strlen(vec[i].iv));
-	memcpy(key.rd_key, vec[i].key, vec[i].klen);
+	//memcpy(iv, vec[i].iv, 16);
 	memset(&key, 0, sizeof(AES_KEY));
-	//key.rd_key[0] = 1;
-	//key.rd_key[1] = 2;
+	memcpy(key.rd_key, vec[i].key, vec[i].klen);
 	key.rounds = vec[i].klen / 4 + 6;
 	printf("key:\n");
-	dump_buf(key.rd_key, 32);
+	dump_buf(key.rd_key, 16);
 	printf("klen:%d, rounds:%d\n", vec[i].klen, key.rounds);
-	AES_encrypt(vec[i].ptext, vec_out, &key);
+	AES_cbc_encrypt(vec[i].ptext, vec_out, vec[i].len, &key,
+			iv, 1);
 	printf("ctext:\n");
 	dump_buf(vec_out, vec[i].len);
 	free_buf();
@@ -355,9 +417,14 @@ void t_cbc_02(int i)
 
 int main(void)
 {
+	//128-bit
 	t_cbc_01(0);
 	t_cbc_02(0);
+	//256-bit
 	t_cbc_01(3);
 	t_cbc_02(3);
+	//192-bit
+	t_cbc_01(2);
+	t_cbc_02(2);
 	return 0;
 }

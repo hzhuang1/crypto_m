@@ -1,6 +1,200 @@
 
 	.arch armv8-a+crypto
 
+.text
+.align  5
+.Lrcon:
+.long   0x01,0x01,0x01,0x01
+.long   0x0c0f0e0d,0x0c0f0e0d,0x0c0f0e0d,0x0c0f0e0d     // rotate-n-splat
+.long   0x1b,0x1b,0x1b,0x1b
+
+
+/*
+ * void aes_v8_set_encrypt_key(const unsigned char *userKey,
+				unsigned int bits, AES_KEY *key);
+ */
+.globl  aes_v8_set_encrypt_key
+.type   aes_v8_set_encrypt_key,%function
+.align  5
+aes_v8_set_encrypt_key:
+.Lenc_key:
+        stp     x29,x30,[sp,#-16]!
+        add     x29,sp,#0
+        mov     x3,#-1
+        cmp     x0,#0
+        b.eq    .Lenc_key_abort
+        cmp     x2,#0
+        b.eq    .Lenc_key_abort
+        mov     x3,#-2
+        cmp     w1,#128
+        b.lt    .Lenc_key_abort
+        cmp     w1,#256
+        b.gt    .Lenc_key_abort
+        tst     w1,#0x3f
+        b.ne    .Lenc_key_abort
+
+        adr     x3,.Lrcon
+        cmp     w1,#192
+
+	# clear V0
+        eor     v0.16b,v0.16b,v0.16b
+	# load user key (first 128-bit) into V3
+        ld1     {v3.16b},[x0],#16
+        mov     w1,#8           // reuse w1
+	# load rcon into V1 & V2
+        ld1     {v1.4s,v2.4s},[x3],#32
+
+        b.lt    .Loop128
+        b.eq    .L192
+        b       .L256
+
+.align  4
+.Loop128:
+	# debug
+	#st1	{v2.16b}, [x2], #16
+	#st1	{v3.16b}, [x2], #16
+	#st1	{v2.16b}, [x2], #16
+	#tbl	v6.16b, {v3.16b}, v2.16b
+	#st1	{v6.16b}, [x2], #16
+	#st1	{v2.16b}, [x2], #16
+	#ext	v5.16b, v0.16b, v3.16b, #12
+	#st1	{v5.16b}, [x2], #16
+	#st1	{v2.16b}, [x2], #16
+	#b	.Ldone
+	# debug end
+        tbl     v6.16b,{v3.16b},v2.16b
+        ext     v5.16b,v0.16b,v3.16b,#12
+        st1     {v3.4s},[x2],#16
+        aese    v6.16b,v0.16b
+        subs    w1,w1,#1
+
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v6.16b,v6.16b,v1.16b
+        eor     v3.16b,v3.16b,v5.16b
+        shl     v1.16b,v1.16b,#1
+        eor     v3.16b,v3.16b,v6.16b
+        b.ne    .Loop128
+
+        ld1     {v1.4s},[x3]
+
+        tbl     v6.16b,{v3.16b},v2.16b
+        ext     v5.16b,v0.16b,v3.16b,#12
+        st1     {v3.4s},[x2],#16
+        aese    v6.16b,v0.16b
+
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v6.16b,v6.16b,v1.16b
+        eor     v3.16b,v3.16b,v5.16b
+        shl     v1.16b,v1.16b,#1
+        eor     v3.16b,v3.16b,v6.16b
+
+        tbl     v6.16b,{v3.16b},v2.16b
+        ext     v5.16b,v0.16b,v3.16b,#12
+        st1     {v3.4s},[x2],#16
+        aese    v6.16b,v0.16b
+
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v6.16b,v6.16b,v1.16b
+        eor     v3.16b,v3.16b,v5.16b
+        eor     v3.16b,v3.16b,v6.16b
+        st1     {v3.4s},[x2]
+        add     x2,x2,#0x50
+
+        mov     w12,#10
+        b       .Ldone
+
+.align  4
+.L192:
+        ld1     {v4.8b},[x0],#8
+        movi    v6.16b,#8                       // borrow v6.16b
+        st1     {v3.4s},[x2],#16
+        sub     v2.16b,v2.16b,v6.16b    // adjust the mask
+
+.Loop192:
+        tbl     v6.16b,{v4.16b},v2.16b
+        ext     v5.16b,v0.16b,v3.16b,#12
+        st1     {v4.8b},[x2],#8
+        aese    v6.16b,v0.16b
+        subs    w1,w1,#1
+
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v3.16b,v3.16b,v5.16b
+
+        dup     v5.4s,v3.s[3]
+        eor     v5.16b,v5.16b,v4.16b
+        eor     v6.16b,v6.16b,v1.16b
+        ext     v4.16b,v0.16b,v4.16b,#12
+        shl     v1.16b,v1.16b,#1
+        eor     v4.16b,v4.16b,v5.16b
+        eor     v3.16b,v3.16b,v6.16b
+        eor     v4.16b,v4.16b,v6.16b
+        st1     {v3.4s},[x2],#16
+        b.ne    .Loop192
+
+        mov     w12,#12
+        add     x2,x2,#0x20
+        b       .Ldone
+
+.align  4
+.L256:
+        ld1     {v4.16b},[x0]
+        mov     w1,#7
+        mov     w12,#14
+        st1     {v3.4s},[x2],#16
+
+.Loop256:
+        tbl     v6.16b,{v4.16b},v2.16b
+        ext     v5.16b,v0.16b,v3.16b,#12
+        st1     {v4.4s},[x2],#16
+        aese    v6.16b,v0.16b
+        subs    w1,w1,#1
+
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v3.16b,v3.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v6.16b,v6.16b,v1.16b
+        eor     v3.16b,v3.16b,v5.16b
+        shl     v1.16b,v1.16b,#1
+        eor     v3.16b,v3.16b,v6.16b
+        st1     {v3.4s},[x2],#16
+        b.eq    .Ldone
+
+        dup     v6.4s,v3.s[3]           // just splat
+        ext     v5.16b,v0.16b,v4.16b,#12
+        aese    v6.16b,v0.16b
+
+        eor     v4.16b,v4.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v4.16b,v4.16b,v5.16b
+        ext     v5.16b,v0.16b,v5.16b,#12
+        eor     v4.16b,v4.16b,v5.16b
+
+        eor     v4.16b,v4.16b,v6.16b
+        b       .Loop256
+
+.Ldone:
+        str     w12,[x2]
+        mov     x3,#0
+
+.Lenc_key_abort:
+        mov     x0,x3                   // return value
+        ldr     x29,[sp],#16
+        ret
+.size   aes_v8_set_encrypt_key,.-aes_v8_set_encrypt_key
+
 /*
  * extern void aes_cbc_01(const unsigned char *inp, unsigned char *out,
  *			size_t length, const AES_KEY *key,
@@ -60,7 +254,7 @@ aes_cbc_01:
 	# what's this???
 	# why rk0 XOR rk10 for 128-bit?
 	# why rk0 XOR rk14 for 256-bit?
-	#eor	v5.16b,v16.16b,v7.16b
+	eor	v5.16b,v16.16b,v7.16b
 	b.eq	.Lcbc_enc128
 
 	ld1	{v2.4s,v3.4s},[x7]
@@ -133,7 +327,7 @@ aes_cbc_01:
 	# rk10 (256b)
 	aese	v0.16b,v20.16b
 	aesmc	v0.16b,v0.16b
-	#eor	v16.16b,v16.16b,v5.16b
+	eor	v16.16b,v16.16b,v5.16b
 	# rk11 (256b)
 	aese	v0.16b,v21.16b
 	aesmc	v0.16b,v0.16b
@@ -185,7 +379,7 @@ aes_cbc_01:
 	aesmc	v0.16b,v0.16b
 	# Why XOR between the next block of ptext and V5?
 	# V5: XOR between the first block of ptext and the last block of key
-	#eor	v16.16b,v16.16b,v5.16b
+	eor	v16.16b,v16.16b,v5.16b
 	aese	v0.16b,v23.16b
 	eor	v6.16b,v0.16b,v7.16b
 	b.hs	.Loop_cbc_enc128
